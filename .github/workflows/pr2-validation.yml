@@ -1,0 +1,67 @@
+name: PR 2 feasibility and Immich validation
+
+on:
+  pull_request_target:
+    branches:
+      - test/tailscale-feasibility
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      attempts:
+        description: Number of fresh runner pairs to test
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+      duration:
+        description: k6 test duration
+        required: true
+        default: 30s
+        type: string
+      vus:
+        description: Number of concurrent k6 virtual users
+        required: true
+        default: "1"
+        type: string
+      photo_ratio:
+        description: Fraction of uploads that should be photos
+        required: true
+        default: "0.5"
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  feasibility:
+    name: Run Tailscale feasibility
+    uses: ./.github/workflows/feasibility.yml
+    with:
+      attempts: ${{ inputs.attempts || '1' }}
+    secrets: inherit
+
+  dispatch-load-test:
+    name: Dispatch Immich load test
+    needs: feasibility
+    if: ${{ needs.feasibility.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch PR 2 load test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.event.pull_request.head.ref || 'feat/immich-load-generation' }}
+          DURATION: ${{ inputs.duration || '30s' }}
+          VUS: ${{ inputs.vus || '1' }}
+          PHOTO_RATIO: ${{ inputs.photo_ratio || '0.5' }}
+        run: |
+          gh workflow run immich-load-test.yml \
+            --repo "$REPOSITORY" \
+            --ref "$WORKFLOW_REF" \
+            --field duration="$DURATION" \
+            --field vus="$VUS" \
+            --field photo_ratio="$PHOTO_RATIO"

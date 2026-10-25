@@ -37,6 +37,15 @@ After reviewing `.env`, start the stack with:
 ./run.sh
 ```
 
+## Decisions
+
+For design decisions made during the project, see the `/docs` folder.
+| title | summary | path |
+|-------|---------|------|
+| Performance Stack | The performance stack is based on Prometheus and Grafana, with cAdvisor for container metrics. | [performance-stack-decisions.md](/docs/performance-stack-decision.md) |
+| Remote Load Generation | Load generation is done on a separate machine to avoid skewing results. This is configured via GitHub Actions and Tailscale.| [remote-load-generation-decision.md](/docs/remote-load-generation-decision.md) |
+
+
 ## AI Usage Statement
 
 This project uses artificial intelligence (AI) to support learning and development. Developers and agents must follow the policy in `./AI-INTEGRITY-POLICY.md`. This explicit policy provides guardrails for responsible AI use and supports academic integrity.
