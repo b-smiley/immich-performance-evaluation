@@ -1,8 +1,9 @@
 # Monitoring getting started
 
-This directory contains the shared Prometheus and Grafana configuration for
-the project. It collects container and cgroup metrics from cAdvisor and
-provisions an **Immich Overview** dashboard with three basic measurements:
+This directory contains the shared Prometheus and Grafana configuration used
+by the root evaluation Compose stack. It collects container and cgroup metrics
+from cAdvisor and provisions an **Immich Overview** dashboard with three basic
+measurements:
 
 - container CPU usage
 - container memory usage
@@ -15,10 +16,11 @@ provisions an **Immich Overview** dashboard with three basic measurements:
 
 ## Start monitoring
 
-From the repository root, start the monitoring stack:
+From the repository root, start the complete Immich and monitoring stack:
 
 ```sh
-docker compose -f monitoring/docker-compose.yml up -d
+cp .env.example .env
+docker compose up -d
 ```
 
 Open Grafana at <http://localhost:3000> and sign in with:
@@ -33,12 +35,12 @@ cAdvisor exposes its metrics at <http://localhost:8080/metrics>.
 ## Stop monitoring
 
 ```sh
-docker compose -f monitoring/docker-compose.yml down
+docker compose down
 ```
 
 The named volumes retain Grafana configuration and Prometheus time-series data.
 To remove those volumes as well, use:
 
 ```sh
-docker compose -f monitoring/docker-compose.yml down -v
+docker compose down -v
 ```

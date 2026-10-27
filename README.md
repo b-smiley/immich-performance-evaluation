@@ -14,29 +14,43 @@ The objective is to evaluate how Immich responds to increasing levels of concurr
 
 Testing will be conducted in two phases. Phase 1 will evaluate six factors at a limited number of levels to identify their effects on system performance. Phase 2 will examine the most influential factors in greater detail, with additional testing levels determined by the initial results. Factors that show little impact in phase 1 will not automatically be excluded, as their effects may only become apparent at higher workloads. The results from phase 1 will be used to reassess which factors require further investigation.
 
-## Local Immich setup
+## Local Immich performance stack
 
-The standard Windows onboarding flow runs from **Git Bash**. It checks for Docker
-Desktop with Docker Engine `25.0.0` or newer and Docker Compose v2, offers to
-install Docker Desktop through `winget` when Docker is missing or too old, and
-downloads Immich's current release Compose files.
-
-Review the actions before approving them:
+The repository owns one Docker Compose stack for Immich, cAdvisor, Prometheus,
+and Grafana. Copy and review the environment file before starting it:
 
 ```bash
-./provision-windows.sh
-```
-
-The `.env` file contains deployment configuration and must be reviewed before starting Immich.
-The output directory can be changed with `--directory PATH` or the
-`IMMICH_INSTALL_DIR` environment variable.
-
-After reviewing `.env`, start the stack with:
-
-```bash
+cp .env.example .env
 ./run.sh
 ```
 
+The upload PoC automatically creates an ephemeral test user and API key on a
+fresh stack. Generate the small photo and video fixtures and run k6 with:
+
+```bash
+./scripts/run-load-test.sh
+```
+
+The workload accepts `VUS`, `DURATION`, `PHOTO_RATIO`, `IMMICH_URL`, and
+`RESULTS_DIR` environment overrides. Collect container logs, dashboard metadata,
+and the raw Prometheus TSDB after a run with:
+
+```bash
+./scripts/collect-results.sh
+```
+
+Grafana is available at <http://localhost:3000>, Prometheus at
+<http://localhost:9090>, and cAdvisor at <http://localhost:8080>.
+
+The `Immich load test` workflow is manual-only. It starts Immich and monitoring
+on an x86 GitHub-hosted runner and runs k6 from a separate ARM runner over
+Tailscale. The `loadtest` environment must provide the Tailscale OAuth secrets and
+`IMMICH_DB_PASSWORD`; the workflow creates the ephemeral test account and API
+key at runtime.
+
+For the complete local test, GitHub Actions artifact download, and Grafana
+replay procedure, see
+[Results replay and Grafana dashboards](docs/results-replay.md).
 ## Decisions
 
 For design decisions made during the project, see the `/docs` folder.
