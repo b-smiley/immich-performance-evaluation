@@ -1,0 +1,31 @@
+name: immich-results-replay
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    ports:
+      - "${REPLAY_PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - ${REPLAY_DATA_DIR:-../data/replay/prometheus}:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    ports:
+      - "${REPLAY_GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${REPLAY_GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${REPLAY_GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - replay-grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  replay-grafana-data:

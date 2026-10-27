@@ -1,2 +1,5 @@
 immich-app/
 HANDOFF.md
+.env
+data/
+__pycache__/

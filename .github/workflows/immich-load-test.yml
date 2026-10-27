@@ -1,0 +1,178 @@
+name: Immich load test
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: k6 test duration
+        required: true
+        default: 30s
+        type: string
+      vus:
+        description: Number of concurrent k6 virtual users
+        required: true
+        default: "1"
+        type: string
+      photo_ratio:
+        description: Fraction of uploads that should be photos
+        required: true
+        default: "0.5"
+        type: string
+  workflow_call:
+    inputs:
+      duration:
+        description: k6 test duration
+        required: false
+        default: 30s
+        type: string
+      vus:
+        description: Number of concurrent k6 virtual users
+        required: false
+        default: "1"
+        type: string
+      photo_ratio:
+        description: Fraction of uploads that should be photos
+        required: false
+        default: "0.5"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: loadtest
+    env:
+      SERVER_NAME: immich-server-${{ github.run_id }}
+      SIGNAL_PORT: "5000"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          hostname: ${{ env.SERVER_NAME }}
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - name: Configure stack
+        env:
+          DB_PASSWORD: ${{ secrets.IMMICH_DB_PASSWORD }}
+        run: |
+          cp .env.example .env
+          if [ -n "$DB_PASSWORD" ]; then
+            sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
+          fi
+      - name: Start Immich and monitoring
+        run: docker compose up -d
+      - name: Wait for Immich
+        run: |
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://localhost:2283/api/server/ping && exit 0
+            sleep 5
+          done
+          docker compose ps
+          docker compose logs --no-color
+          exit 1
+      - name: Collect failure diagnostics
+        if: ${{ failure() }}
+        run: |
+          docker compose ps
+          docker compose logs --no-color database immich-server redis
+      - name: Wait for client completion
+        run: |
+          python3 scripts/done_listener.py --port "$SIGNAL_PORT" --output client-complete.signal &
+          listener_pid=$!
+          trap 'kill "$listener_pid" 2>/dev/null || true' EXIT
+          timeout --foreground 2700 bash -c \
+            'until test -f client-complete.signal; do sleep 2; done'
+      - name: Collect server results
+        if: always()
+        run: bash ./scripts/collect-results.sh "${{ github.workspace }}/results"
+      - name: Upload server results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: immich-load-${{ github.run_id }}-server
+          path: results
+          if-no-files-found: warn
+      - name: Clean up stack
+        if: always()
+        run: docker compose down -v
+
+  client:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    environment: loadtest
+    env:
+      SERVER_NAME: immich-server-${{ github.run_id }}
+      SIGNAL_PORT: "5000"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          hostname: immich-client-${{ github.run_id }}
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - name: Resolve server endpoint
+        run: |
+          for attempt in $(seq 1 30); do
+            tailscale status --json > tailscale-status.json
+            if server_ip="$(python3 scripts/find_peer_ip.py tailscale-status.json "$SERVER_NAME" 2>/dev/null)"; then
+              if tailscale ping --timeout=5s "$server_ip" >/dev/null 2>&1; then
+                echo "IMMICH_URL=http://${server_ip}:2283" >> "$GITHUB_ENV"
+                echo "SERVER_IP=${server_ip}" >> "$GITHUB_ENV"
+                echo "K6_PROMETHEUS_RW_SERVER_URL=http://${server_ip}:9090/api/v1/write" >> "$GITHUB_ENV"
+                exit 0
+              fi
+            fi
+            server_ip="$(getent ahostsv4 "$SERVER_NAME" | awk 'NR == 1 {print $1}')"
+            if [ -n "$server_ip" ] && tailscale ping --timeout=5s "$server_ip" >/dev/null 2>&1; then
+              echo "IMMICH_URL=http://${server_ip}:2283" >> "$GITHUB_ENV"
+              echo "SERVER_IP=${server_ip}" >> "$GITHUB_ENV"
+              echo "K6_PROMETHEUS_RW_SERVER_URL=http://${server_ip}:9090/api/v1/write" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 5
+          done
+          tailscale status
+          exit 1
+      - name: Wait for remote Immich
+        timeout-minutes: 30
+        run: |
+          for attempt in $(seq 1 360); do
+            if curl --fail --silent --show-error \
+              --connect-timeout 5 --max-time 10 \
+              "${IMMICH_URL}/api/server/ping"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Immich did not become ready at ${IMMICH_URL}" >&2
+          exit 1
+      - name: Run k6
+        env:
+          DURATION: ${{ inputs.duration || '30s' }}
+          VUS: ${{ inputs.vus || '1' }}
+          PHOTO_RATIO: ${{ inputs.photo_ratio || '0.5' }}
+          RESULTS_DIR: ${{ github.workspace }}/data/results
+        run: bash ./scripts/run-load-test.sh
+      - name: Signal server
+        if: always()
+        run: |
+          if [ -n "${SERVER_IP:-}" ]; then
+            curl --fail --silent --show-error --max-time 10 \
+              --data-binary done "http://${SERVER_IP}:${SIGNAL_PORT}/done" || true
+          fi
+      - name: Upload client results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: immich-load-${{ github.run_id }}-client
+          path: data/results
+          if-no-files-found: warn
