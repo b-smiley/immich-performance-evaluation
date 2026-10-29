@@ -11,9 +11,13 @@ From Git Bash:
 ```bash
 cp .env.example .env
 ./run.sh
-VUS=1 DURATION=30s PHOTO_RATIO=0.5 ./scripts/run-load-test.sh
+VUS=1 DURATION=30s PHOTO_RATIO=0.5 SIZE_LEVEL=small RESOLUTION=1080p \
+  ./scripts/run-load-test.sh
 ./scripts/collect-results.sh
 ```
+
+In Grafana or the raw k6 JSON, requests are tagged with `kind`, `size_level`,
+`resolution`, and `format`.
 
 The load test writes raw k6 output to `data/results/k6.json` and sends the k6
 metrics to Prometheus through its remote-write receiver. The server metrics and
