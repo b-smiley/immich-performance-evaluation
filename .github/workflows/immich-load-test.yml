@@ -18,6 +18,28 @@ on:
         required: true
         default: "0.5"
         type: string
+      size_level:
+        description: Fixture size level (photo 0-1/1-10/10-50MB, video 1-10/10-100/100-1000MB)
+        required: true
+        default: small
+        type: choice
+        options: [small, medium, large]
+      resolution:
+        description: Fixture resolution
+        required: true
+        default: 1080p
+        type: choice
+        options: [480p, 1080p, 4k]
+      iterations:
+        description: Total uploads (optional; overrides duration)
+        required: false
+        default: ""
+        type: string
+      fixture_seed:
+        description: Fixture generator seed
+        required: false
+        default: "533"
+        type: string
   workflow_call:
     inputs:
       duration:
@@ -34,6 +56,26 @@ on:
         description: Fraction of uploads that should be photos
         required: false
         default: "0.5"
+        type: string
+      size_level:
+        description: Fixture size level (small, medium, or large)
+        required: false
+        default: small
+        type: string
+      resolution:
+        description: Fixture resolution (480p, 1080p, or 4k)
+        required: false
+        default: 1080p
+        type: string
+      iterations:
+        description: Total uploads (optional; overrides duration)
+        required: false
+        default: ""
+        type: string
+      fixture_seed:
+        description: Fixture generator seed
+        required: false
+        default: "533"
         type: string
 
 permissions:
@@ -55,6 +97,11 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
           hostname: ${{ env.SERVER_NAME }}
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install --yes ffmpeg
       - name: Configure stack
@@ -65,6 +112,23 @@ jobs:
           if [ -n "$DB_PASSWORD" ]; then
             sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
           fi
+      - name: Check server disk
+        env:
+          SIZE_LEVEL: ${{ inputs.size_level || 'small' }}
+          VUS: ${{ inputs.vus || '1' }}
+          DURATION: ${{ inputs.duration || '30s' }}
+          ITERATIONS: ${{ inputs.iterations }}
+          PHOTO_RATIO: ${{ inputs.photo_ratio || '0.5' }}
+        run: |
+          python3 scripts/preflight.py disk \
+            --size-level "$SIZE_LEVEL" \
+            --path data/upload \
+            --vus "$VUS" \
+            --duration "$DURATION" \
+            --iterations "${ITERATIONS:-0}" \
+            --photo-ratio "$PHOTO_RATIO"
+          mkdir -p results
+          df -h > results/df-before.txt
       - name: Start Immich and monitoring
         run: docker compose up -d
       - name: Wait for Immich
@@ -90,7 +154,10 @@ jobs:
             'until test -f client-complete.signal; do sleep 2; done'
       - name: Collect server results
         if: always()
-        run: bash ./scripts/collect-results.sh "${{ github.workspace }}/results"
+        run: |
+          mkdir -p results
+          df -h > results/df-after.txt
+          bash ./scripts/collect-results.sh "${{ github.workspace }}/results"
       - name: Upload server results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -117,6 +184,11 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
           hostname: immich-client-${{ github.run_id }}
+      - name: Free runner disk
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install --yes ffmpeg
       - name: Resolve server endpoint
@@ -160,6 +232,10 @@ jobs:
           DURATION: ${{ inputs.duration || '30s' }}
           VUS: ${{ inputs.vus || '1' }}
           PHOTO_RATIO: ${{ inputs.photo_ratio || '0.5' }}
+          SIZE_LEVEL: ${{ inputs.size_level || 'small' }}
+          RESOLUTION: ${{ inputs.resolution || '1080p' }}
+          ITERATIONS: ${{ inputs.iterations }}
+          FIXTURE_SEED: ${{ inputs.fixture_seed || '533' }}
           RESULTS_DIR: ${{ github.workspace }}/data/results
         run: bash ./scripts/run-load-test.sh
       - name: Signal server

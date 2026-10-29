@@ -32,7 +32,27 @@ fresh stack. Generate the small photo and video fixtures and run k6 with:
 ```
 
 The workload accepts `VUS`, `DURATION`, `PHOTO_RATIO`, `IMMICH_URL`, and
-`RESULTS_DIR` environment overrides. Collect container logs, dashboard metadata,
+`RESULTS_DIR` environment overrides. Upload fixtures are generated for one
+size level and resolution per run:
+
+```bash
+SIZE_LEVEL=medium RESOLUTION=4k VUS=2 DURATION=1m ./scripts/run-load-test.sh
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SIZE_LEVEL` | `small` | `small`, `medium`, or `large` (photo 0–1/1–10/10–50MB, video 1–10/10–100/100–1000MB) |
+| `RESOLUTION` | `1080p` | `480p`, `1080p`, or `4k` |
+| `ITERATIONS` | unset | Total uploads; replaces `DURATION` when set |
+| `FIXTURE_SEED` | `533` | Seed for fixture sizes and content |
+| `POOL_SIZE` | 10/5/3 | Files per kind in the fixture pool |
+| `UPLOAD_TIMEOUT` | `10m` | k6 request timeout |
+| `K6_MEMORY_BUDGET_BYTES` | 75% of Docker memory | Memory guard budget |
+| `UPLOAD_MBPS` | `1000` | Link speed assumed by the disk check |
+
+Generation requires ffmpeg. Photo 480p × `large` cannot be produced, so use
+`PHOTO_RATIO=0` for that combination. See
+[Upload fixtures](docs/upload-fixture-decision.md) for details. Collect container logs, dashboard metadata,
 and the raw Prometheus TSDB after a run with:
 
 ```bash
@@ -58,6 +78,7 @@ For design decisions made during the project, see the `/docs` folder.
 |-------|---------|------|
 | Performance Stack | The performance stack is based on Prometheus and Grafana, with cAdvisor for container metrics. | [performance-stack-decisions.md](/docs/performance-stack-decision.md) |
 | Remote Load Generation | Load generation is done on a separate machine to avoid skewing results. This is configured via GitHub Actions and Tailscale.| [remote-load-generation-decision.md](/docs/remote-load-generation-decision.md) |
+| Upload Fixtures | Seeded synthetic photos and videos vary by size level and resolution, and every upload is made unique to avoid Immich's deduplication. | [upload-fixture-decision.md](/docs/upload-fixture-decision.md) |
 
 
 ## AI Usage Statement
