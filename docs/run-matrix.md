@@ -97,45 +97,34 @@ checks the Immich upload path (when local), not the load-generator disk.
 The ceilings above are memory-only; a combined maximum VUS cannot be stated
 until free upload-disk space is measured.
 
-| Run | Existing Phase 1 settings (A/B, workload, size/resolution, CPU) | `VUS=A` estimate | `VUS=B` estimate |
+| Run | Phase 1 settings (A/B, workload, size/resolution, CPU) | `VUS=A` estimate | `VUS=B` estimate |
 |---:|---|---|---|
 | 1 | 1/1, photo-only, large/4k, 4 | Photo pool: 240/12,000 MB; disk needs ≥20,000 MB free. | Same as A (B=1). |
 | 2 | 1/1, video-only, large/480p, 1 | Video pool: 4,650/12,000 MB; disk needs ≥83,334 MB free. | Same as A (B=1). |
 | 3 | 1/1000, photo-only, small/4k, 1 | Photo pool: 8/12,000 MB; disk needs ≥334 MB free. | Photo pool: 3,005/12,000 MB (within budget); disk needs ≥83,334 MB free. |
-| 4 | 1/1000, video-only, small/480p, 4 | Video pool: 85/12,000 MB; disk needs ≥3,667 MB free. | Video pool: 30,055/12,000 MB (over budget); disk needs ≥83,334 MB free. |
+| 4 | 1/1000, video-only, small/480p, 4 | Skipped: B=1000 uploads are over the memory budget (30,055 / 12,000 MB). The `VUS=A` reading alone would fit (85 / 12,000 MB) but does not test B=1000. | Infeasible, skipped (over memory budget). |
 | 5 | 25/1, photo-only, small/480p, 4 | Photo pool: 80/12,000 MB; disk needs ≥8,334 MB free. | Photo pool: 8/12,000 MB; disk needs ≥334 MB free. |
 | 6 | 25/1, video-only, small/4k, 1 | Video pool: 805/12,000 MB; disk needs ≥83,334 MB free. | Video pool: 85/12,000 MB; disk needs ≥3,667 MB free. |
-| 7 | 25/1000, photo-only, large/480p, 1 | Not generatable: fixture generation refuses 480p large photos, before preflight. | Same fixture-generation refusal; no preflight check. |
-| 8 | 25/1000, video-only, large/4k, 4 | Video pool: 76,650/12,000 MB (over budget); disk needs ≥83,334 MB free. | Video pool: 3,001,650/12,000 MB (over budget); disk needs ≥83,334 MB free. |
+| 7 | 25/1000, photo-only, large/480p, 1 | Infeasible, skipped (fixture cannot be generated). | Infeasible, skipped (fixture cannot be generated). |
+| 8 | 25/1000, video-only, large/4k, 4 | Infeasible, skipped (over memory budget). | Infeasible, skipped (over memory budget). |
 
 Disk thresholds assume a five-minute hold, 1,000 Mb/s, and midpoint means of
 0.5/5.5 MB (small photo/video) and 30/550 MB (large photo/video). Rows pass
 disk preflight only if measured free space meets the stated threshold. The
-existing run table is consistent with `D=AB`, `E=AC`, and `F=BC`, but run 7
-selects an infeasible fixture. The harness must gain separate A/B controls
-before the matrix can test both factors.
+run table is consistent with `D=AB`, `E=AC`, and `F=BC`. The harness
+must gain separate A/B controls before the matrix can test both factors.
 
-Memory is within budget under both readings for runs 1, 2, 3, 5, and 6. Run 4
-is over budget at `VUS=B`; run 8 is over budget under both readings. Run 7
-cannot reach preflight because its fixture cannot be generated.
+Runs 7 and 8 are infeasible and skipped under both VUS readings. Run 4 is
+skipped because its planned B=1000 uploads are over the memory budget. Skipped
+runs are not executed. With runs 4, 7 and 8 skipped, the remaining five
+settings no longer form the full fraction, so main effects are confounded more
+heavily than the aliasing above describes.
+Memory is within budget under both readings for runs 1, 2, 3, 5, and 6.
 
-### Options for infeasible runs
-
-- **Stage and stop at preflight refusals (recommended):** begin at low levels
-  and stop or revise the plan when preflight refuses a cell. This avoids
-  resource exhaustion, but leaves an incomplete and potentially unbalanced
-  design.
-- **Lower the top concurrency for large files:** set a preflight-supported high
-  level for each size. This keeps runs feasible on the current setup, but
-  changes the planned factor level and weakens direct comparisons.
-- **Use a larger load generator:** more client memory may retain the planned
-  concurrency, but this does not remove upload-disk or network limits; those
-  capacities must also be sufficient. It adds runner cost and access
-  requirements.
-
-Run each setting three times (24 measured runs total). Randomize the execution
-order of the 24 runs before testing and record that order and the actual
-settings. Do not treat the three repeats as three additional factor settings.
+Run each feasible setting three times (up to 15 measured runs total).
+Randomize the execution order of the feasible runs before testing and record
+that order and the actual settings. Do not treat the three repeats as three
+additional factor settings.
 
 **Upgrade option:** a `2^(6-2)` 16-run fraction can use `E=ABC` and `F=ABD`.
 Its defining relation is `I=ABCE=ABDF=CDEF`, giving Resolution IV. Main
@@ -186,13 +175,7 @@ concurrent users and concurrent uploads. The procedure above therefore
 describes the required protocol, but concurrency controls, ramping, and the
 measurement/drain boundaries need operational support before execution.
 
-## Preliminary observation (not a result)
-
-In local testing, throughput on small 480p photos seems to cap near 20 req/s.
-Sachin's Grafana run at about 100 VUs showed throughput well below what
-`VUS / (1 s sleep)` would suggest. This may mean that, past a point, more VUs
-mainly add latency; it needs measurement. Report throughput, p95 upload latency,
-and error rate.
+Report throughput, p95 upload latency, and error rate.
 
 ## Open questions
 
@@ -208,23 +191,15 @@ and error rate.
   varies?
 - What backlog metric and threshold determine that background processing has
   cleared, and how will metric collection continue through the drain period?
-- What stopping rule will the staged plan use: stop when preflight refuses a
-  run, or stop at an agreed error-rate threshold? The team must agree before
-  runs start.
 - What is the actual free disk space on the runners? The estimated disk
   thresholds (about 83 GB for some runs) are unverified and must be checked.
 - How will fixtures be pregenerated instead of generated on every run, and
-  where will they be stored? Options under discussion are Git LFS, Actions
-  cache keyed on seed and size level, or storage outside the repository; no
-  option is selected. Large videos can take up to about 30 minutes to generate.
+  where will they be stored? Large videos can take up to about 30 minutes to
+  generate.
   See [the fixture decision](upload-fixture-decision.md) for fixture details.
 - How will CPU core limits be set and verified consistently for each Phase 1
   run?
-- How should the randomized order of Phase 1's 24 repeated runs be generated
+- How should the randomized order of Phase 1's 15 repeated runs be generated
   and preserved?
-- Is the 50/50 mix by upload count or by bytes?
-- What iperf3 throughput did Brendan measure? The result is not recorded in the
-  repository; add it when available before deciding whether the network is a
-  bottleneck.
 - How will throughput, p95 upload latency, and error rate be defined and
   summarized?
