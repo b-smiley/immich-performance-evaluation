@@ -140,20 +140,31 @@ The **k6 Prometheus** dashboard can show:
 - virtual users and maximum virtual users
 - total HTTP requests and request rate
 - HTTP request failures and failed-request rate
-- request-duration p99 and waiting/sending/receiving timings
+- request-duration min, max, p50, p75, p90, p95, and p99, and
+  waiting/sending/receiving timings
 - iteration count, iteration duration, and dropped iterations
 - bytes sent and received
 
-The **Immich Overview** dashboard can show:
+Report percentiles from `k6-summary.json`, in milliseconds. Prometheus stores
+each percentile per tag combination (such as photo and video) in seconds, so the
+dashboard's `avg()` across those series is not a true overall percentile. Use it
+only to view trends over time. Runs recorded before these percentiles were added
+have only p99 in Prometheus and no p75 or p99 in `k6-summary.json`; compute any
+missing values from `k6.json`.
 
-- container CPU usage
-- container memory usage
+The **Immich Overview** dashboard can show, per Compose service:
+
+- container CPU usage, as a percentage of one core
+- memory working set, which excludes reclaimable file cache
+- memory usage including cache
 - running container count
 
 Raw Prometheus queries are also available for metrics such as
-`k6_http_reqs_total`, `k6_vus`, `k6_http_req_duration_p99`,
-`k6_http_req_failed_rate`, `container_cpu_usage_seconds_total`, and
-`container_memory_usage_bytes`.
+`k6_http_reqs_total`, `k6_vus`, `k6_http_req_duration_p50`,
+`k6_http_req_duration_p75`, `k6_http_req_duration_p90`,
+`k6_http_req_duration_p95`, `k6_http_req_duration_p99`,
+`k6_http_req_failed_rate`, `container_cpu_usage_seconds_total`,
+`container_memory_working_set_bytes`, and `container_memory_usage_bytes`.
 
 The replay stack uses separate ports so it can run alongside the live stack if
 the ports are changed:

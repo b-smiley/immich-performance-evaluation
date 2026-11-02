@@ -81,6 +81,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
   --env "ITERATIONS=${ITERATIONS}" \
   --env "UPLOAD_TIMEOUT=${UPLOAD_TIMEOUT:-10m}" \
   --env "K6_PROMETHEUS_RW_SERVER_URL=${K6_PROMETHEUS_RW_SERVER_URL:-http://host.docker.internal:9090/api/v1/write}" \
+  --env "K6_PROMETHEUS_RW_TREND_STATS=p(50),p(75),p(90),p(95),p(99),min,max" \
   grafana/k6:0.54.0 run \
   --out json=/results/k6.json \
   --out experimental-prometheus-rw \

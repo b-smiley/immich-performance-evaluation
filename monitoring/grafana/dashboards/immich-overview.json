@@ -12,7 +12,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percentunit"
+          "unit": "percent"
         },
         "overrides": []
       },
@@ -31,12 +31,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (id) (rate(container_cpu_usage_seconds_total{id!=\"/\"}[1m])) * 100",
-          "legendFormat": "{{id}}",
+          "expr": "sum by (container_label_com_docker_compose_service) (rate(container_cpu_usage_seconds_total{container_label_com_docker_compose_service!=\"\"}[1m])) * 100",
+          "legendFormat": "{{container_label_com_docker_compose_service}}",
           "refId": "A"
         }
       ],
-      "title": "Container CPU usage (%)",
+      "title": "Container CPU usage (% of one core)",
       "type": "timeseries"
     },
     {
@@ -56,6 +56,40 @@
         "x": 12,
         "y": 0
       },
+      "id": 4,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_working_set_bytes{container_label_com_docker_compose_service!=\"\"})",
+          "legendFormat": "{{container_label_com_docker_compose_service}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Memory: working set",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "id": 2,
       "options": {
         "legend": {
@@ -65,12 +99,12 @@
       },
       "targets": [
         {
-          "expr": "sum by (id) (container_memory_usage_bytes{id!=\"/\"})",
-          "legendFormat": "{{id}}",
+          "expr": "sum by (container_label_com_docker_compose_service) (container_memory_usage_bytes{container_label_com_docker_compose_service!=\"\"})",
+          "legendFormat": "{{container_label_com_docker_compose_service}}",
           "refId": "A"
         }
       ],
-      "title": "Container memory usage",
+      "title": "Memory: usage including cache",
       "type": "timeseries"
     },
     {
@@ -87,7 +121,7 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 8
       },
       "id": 3,
@@ -99,7 +133,7 @@
       },
       "targets": [
         {
-          "expr": "count(container_last_seen{id!=\"/\"})",
+          "expr": "count(container_last_seen{container_label_com_docker_compose_service!=\"\"})",
           "legendFormat": "running containers",
           "refId": "A"
         }
@@ -125,5 +159,5 @@
   "timezone": "browser",
   "title": "Immich Overview",
   "uid": "immich-overview",
-  "version": 1
+  "version": 2
 }

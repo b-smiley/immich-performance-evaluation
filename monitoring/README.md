@@ -2,12 +2,17 @@
 
 This directory contains the shared Prometheus and Grafana configuration used
 by the root evaluation Compose stack. It collects container and cgroup metrics
-from cAdvisor and provisions an **Immich Overview** dashboard with three basic
-measurements:
+from cAdvisor and provisions an **Immich Overview** dashboard with these
+per-service measurements:
 
-- container CPU usage
-- container memory usage
+- container CPU usage, as a percentage of one core
+- memory working set, which excludes reclaimable file cache
+- memory usage including cache
 - running container count
+
+The panels need cAdvisor to see individual containers. This works on the Linux
+GitHub Actions runners. On Docker Desktop with WSL2, cAdvisor reports only
+top-level groups such as `/docker`, so the panels are empty.
 
 ## Prerequisites
 

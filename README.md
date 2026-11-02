@@ -17,7 +17,9 @@ Testing will be conducted in two phases. Phase 1 will evaluate six factors at a 
 ## Local Immich performance stack
 
 The repository owns one Docker Compose stack for Immich, cAdvisor, Prometheus,
-and Grafana. Copy and review the environment file before starting it:
+and Grafana. Machine learning is out of scope for this evaluation, so it is
+disabled through `config/immich-config.json` and its container is not part of
+the stack. Copy and review the environment file before starting it:
 
 ```bash
 cp .env.example .env

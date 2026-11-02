@@ -153,6 +153,13 @@ value selected before testing; the current harness cannot independently enforce
 that while varying `VUS`, so resolve this execution gap before treating Phase 2
 as a controlled test of upload concurrency alone.
 
+## Machine learning scope
+
+Machine learning is disabled through `config/immich-config.json`, and the
+machine-learning container is not part of the stack. Background processing in
+these runs therefore covers non-ML jobs only. Earlier runs are not comparable
+with later ones because they included failing ML jobs and an idle ML container.
+
 ## Procedure for each run
 
 1. Apply the run's factor settings and clean/reset Immich to the same defined
