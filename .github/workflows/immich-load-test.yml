@@ -1,4 +1,13 @@
 name: Immich load test
+run-name: >-
+  Immich load test:
+  vus=${{ inputs.vus || '1' }}
+  dur=${{ inputs.duration || '30s' }}
+  photo=${{ inputs.photo_ratio || '0.5' }}
+  size=${{ inputs.size_level || 'small' }}
+  res=${{ inputs.resolution || '1080p' }}
+  iters=${{ inputs.iterations || 'none' }}
+  seed=${{ inputs.fixture_seed || '533' }}
 
 on:
   workflow_dispatch:
@@ -81,6 +90,9 @@ on:
 permissions:
   contents: read
 
+env:
+  RUN_PARAMS: vus=${{ inputs.vus || '1' }}_dur=${{ inputs.duration || '30s' }}_photo=${{ inputs.photo_ratio || '0.5' }}_size=${{ inputs.size_level || 'small' }}_res=${{ inputs.resolution || '1080p' }}_iters=${{ inputs.iterations || 'none' }}_seed=${{ inputs.fixture_seed || '533' }}
+
 jobs:
   server:
     runs-on: ubuntu-latest
@@ -91,6 +103,8 @@ jobs:
       SIGNAL_PORT: "5000"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Record run parameters
+        run: python3 scripts/record_run_params.py --role server --output results/run-params.json --summary
       - uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -162,7 +176,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: immich-load-${{ github.run_id }}-server
+          name: immich-load_run=${{ github.run_id }}_role=server_${{ env.RUN_PARAMS }}
           path: results
           if-no-files-found: warn
       - name: Clean up stack
@@ -178,6 +192,8 @@ jobs:
       SIGNAL_PORT: "5000"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Record run parameters
+        run: python3 scripts/record_run_params.py --role client --output data/results/run-params.json
       - uses: tailscale/github-action@99a8333667fff04fdd6cffb46dfd409f8329a7bf # v4
         with:
           oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
@@ -249,6 +265,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: immich-load-${{ github.run_id }}-client
+          name: immich-load_run=${{ github.run_id }}_role=client_${{ env.RUN_PARAMS }}
           path: data/results
           if-no-files-found: warn
