@@ -6,8 +6,11 @@ services:
     volumes:
       - ${UPLOAD_LOCATION:-./data/upload}:/data
       - /etc/localtime:/etc/localtime:ro
+      - ./config/immich-config.json:/config/immich-config.json:ro
     env_file:
       - .env
+    environment:
+      IMMICH_CONFIG_FILE: /config/immich-config.json
     ports:
       - "${IMMICH_PORT:-2283}:2283"
     depends_on:
@@ -15,14 +18,6 @@ services:
         condition: service_healthy
       database:
         condition: service_healthy
-    restart: unless-stopped
-
-  immich-machine-learning:
-    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
-    volumes:
-      - model-cache:/cache
-    env_file:
-      - .env
     restart: unless-stopped
 
   redis:
@@ -91,6 +86,5 @@ services:
     restart: unless-stopped
 
 volumes:
-  model-cache:
   prometheus-data:
   grafana-data:

@@ -31,6 +31,7 @@ export const options = {
       : { executor: "constant-vus", vus, duration: __ENV.DURATION || "30s" },
   },
   thresholds: { http_req_failed: ["rate<0.05"] },
+  summaryTrendStats: ["avg", "min", "max", "p(50)", "p(75)", "p(90)", "p(95)", "p(99)"],
 };
 
 const crcTable = Array.from({ length: 256 }, (_, n) => {

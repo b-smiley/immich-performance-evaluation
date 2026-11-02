@@ -1449,7 +1449,7 @@
                                           "type":  "prometheus",
                                           "uid":  "Prometheus"
                                       },
-                       "description":  "min/max/p95/p99 depends on the available Quantile Stats",
+                       "description":  "min/max/p50/p75/p90/p95/p99 depends on the available Quantile Stats",
                        "fieldConfig":  {
                                            "defaults":  {
                                                             "color":  {
@@ -1527,6 +1527,42 @@
                                                                  "matcher":  {
                                                                                  "id":  "byName",
                                                                                  "options":  "max"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "s"
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "p50"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "s"
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "p75"
+                                                                             },
+                                                                 "properties":  [
+                                                                                    {
+                                                                                        "id":  "unit",
+                                                                                        "value":  "s"
+                                                                                    }
+                                                                                ]
+                                                             },
+                                                             {
+                                                                 "matcher":  {
+                                                                                 "id":  "byName",
+                                                                                 "options":  "p90"
                                                                              },
                                                                  "properties":  [
                                                                                     {
@@ -1617,6 +1653,48 @@
                                                               "uid":  "Prometheus"
                                                           },
                                            "editorMode":  "code",
+                                           "expr":  "avg by(name, method, status) (k6_http_req_duration_p50{testid=~\"$testid\"})",
+                                           "format":  "table",
+                                           "hide":  false,
+                                           "instant":  false,
+                                           "legendFormat":  "p50",
+                                           "range":  true,
+                                           "refId":  "F"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "Prometheus"
+                                                          },
+                                           "editorMode":  "code",
+                                           "expr":  "avg by(name, method, status) (k6_http_req_duration_p75{testid=~\"$testid\"})",
+                                           "format":  "table",
+                                           "hide":  false,
+                                           "instant":  false,
+                                           "legendFormat":  "p75",
+                                           "range":  true,
+                                           "refId":  "G"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "Prometheus"
+                                                          },
+                                           "editorMode":  "code",
+                                           "expr":  "avg by(name, method, status) (k6_http_req_duration_p90{testid=~\"$testid\"})",
+                                           "format":  "table",
+                                           "hide":  false,
+                                           "instant":  false,
+                                           "legendFormat":  "p90",
+                                           "range":  true,
+                                           "refId":  "H"
+                                       },
+                                       {
+                                           "datasource":  {
+                                                              "type":  "prometheus",
+                                                              "uid":  "Prometheus"
+                                                          },
+                                           "editorMode":  "code",
                                            "expr":  "avg by(name, method, status) (k6_http_req_duration_p95{testid=~\"$testid\"})",
                                            "format":  "table",
                                            "hide":  false,
@@ -1664,6 +1742,24 @@
                                                                                                                     ],
                                                                                                    "operation":  "aggregate"
                                                                                                },
+                                                                                  "Value #F":  {
+                                                                                                   "aggregations":  [
+                                                                                                                        "mean"
+                                                                                                                    ],
+                                                                                                   "operation":  "aggregate"
+                                                                                               },
+                                                                                  "Value #G":  {
+                                                                                                   "aggregations":  [
+                                                                                                                        "mean"
+                                                                                                                    ],
+                                                                                                   "operation":  "aggregate"
+                                                                                               },
+                                                                                  "Value #H":  {
+                                                                                                   "aggregations":  [
+                                                                                                                        "mean"
+                                                                                                                    ],
+                                                                                                   "operation":  "aggregate"
+                                                                                               },
                                                                                   "Value #D":  {
                                                                                                    "aggregations":  [
                                                                                                                         "mean"
@@ -1706,9 +1802,19 @@
                                                                    "indexByName":  {
                                                                                        "Time":  0,
                                                                                        "Value #B":  4,
+                                                                                       "Value #B (min)":  4,
                                                                                        "Value #C":  5,
-                                                                                       "Value #D":  6,
-                                                                                       "Value #E":  7,
+                                                                                       "Value #C (max)":  5,
+                                                                                       "Value #F":  6,
+                                                                                       "Value #F (mean)":  6,
+                                                                                       "Value #G":  7,
+                                                                                       "Value #G (mean)":  7,
+                                                                                       "Value #H":  8,
+                                                                                       "Value #H (mean)":  8,
+                                                                                       "Value #D":  9,
+                                                                                       "Value #D (mean)":  9,
+                                                                                       "Value #E":  10,
+                                                                                       "Value #E (mean)":  10,
                                                                                        "method":  2,
                                                                                        "name":  1,
                                                                                        "status":  3
@@ -1718,6 +1824,12 @@
                                                                                         "Value #B (min)":  "min",
                                                                                         "Value #C":  "max",
                                                                                         "Value #C (max)":  "max",
+                                                                                        "Value #F":  "p50",
+                                                                                        "Value #F (mean)":  "p50",
+                                                                                        "Value #G":  "p75",
+                                                                                        "Value #G (mean)":  "p75",
+                                                                                        "Value #H":  "p90",
+                                                                                        "Value #H (mean)":  "p90",
                                                                                         "Value #D":  "p95",
                                                                                         "Value #D (mean)":  "p95",
                                                                                         "Value #E":  "p99",
