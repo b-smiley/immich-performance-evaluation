@@ -94,6 +94,45 @@ being returned after their last sample becomes stale, even though historical
 range queries still work. If the run occurred at 17:30 local time, select an
 absolute range such as 17:29–17:32 rather than only querying "now".
 
+## Artifact names and run parameters
+
+Each **Immich load test** artifact name records the run and its inputs as
+`_`-separated `key=value` pairs after the `immich-load` prefix:
+
+```text
+immich-load_run=41483415709_role=server_vus=1_dur=30s_photo=0.5_size=small_res=1080p_iters=none_seed=533
+```
+
+Parse a name in Python with:
+
+```python
+dict(pair.split("=", 1) for pair in name.split("_")[1:])
+```
+
+| Key | Workflow input |
+|---|---|
+| `run` | GitHub Actions run ID |
+| `role` | `server` or `client` artifact |
+| `vus` | `vus` |
+| `dur` | `duration` |
+| `photo` | `photo_ratio` |
+| `size` | `size_level` |
+| `res` | `resolution` |
+| `iters` | `iterations` (`none` when not set) |
+| `seed` | `fixture_seed` |
+
+`dur` always records the input as given, but k6 ignores it when `iters` is not
+`none`. Account for this when grouping results by duration.
+
+Input values may only contain letters, digits, and `.`, so the workflow fails
+at its first step for any other value.
+
+Both artifacts also contain `run-params.json`, which records the same inputs
+with the run ID, role, commit, and ref. Use it when a downloaded folder may have
+been renamed. Runs from before this format use the names
+`immich-load-<run-id>-server` and `immich-load-<run-id>-client`, and have no
+`run-params.json`; `scripts/replay-cloud-results.sh` accepts both.
+
 ## Available dashboard data
 
 The **k6 Prometheus** dashboard can show:

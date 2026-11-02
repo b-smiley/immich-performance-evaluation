@@ -19,6 +19,19 @@ Before generating a commit message:
 
 The commit message must account for all staged additions, modifications, deletions, renames, and content changes. If the staged diff is empty, or if the intended commit scope is unclear, do not generate a final message; ask the developer for clarification.
 
+## Terminal-safe text
+
+The developer may paste the message into a quoted `git commit -m` argument in Bash or PowerShell, so a shell must read all of it as part of that one string. The message must never contain these characters:
+
+- double quotes (`"`)
+- single quotes or apostrophes (`'`)
+- backticks (`` ` ``)
+- dollar signs (`$`)
+- backslashes (`\`)
+- exclamation marks (`!`)
+
+Reword the text to avoid them, including file names, code, and commands. Check the final message for these characters before presenting it.
+
 ## Title
 
 Use the Conventional Commits format:
@@ -44,13 +57,13 @@ If AI tooling contributed to the commit, add an `AI Usage:` section after the bo
 
 ```text
 AI Usage:
-- Validation: "<exact validation statement supplied by the developer>"
+- Validation: <exact validation statement supplied by the developer>
 - Input prompts: <brief summary of the prompts or instructions provided>
 - Output prompts: <brief summary of the AI-generated outputs used or adapted>
 - Tool identification: <AI tool, model, version, and usage context, such as Copilot CLI or web>
 ```
 
-The `Validation` entry must be supplied by the developer in their exact wording. The agent must not write, rewrite, summarize, infer, or verify the developer's validation statement, and must not substitute agent-run checks for it. Ask the developer to provide the exact statement if it is missing. Preserve the supplied wording verbatim, including its quotation marks if provided.
+The `Validation` entry must be supplied by the developer in their exact wording. The agent must not write, rewrite, summarize, infer, or verify the developer's validation statement, and must not substitute agent-run checks for it. Ask the developer to provide the exact statement if it is missing. Preserve the supplied wording verbatim, without surrounding quotation marks. If the wording itself contains a character listed under Terminal-safe text, ask the developer to reword it rather than changing it yourself.
 
 The developer's statement must describe meaningful validation they performed, not merely a superficial inspection. Developers must understand and review AI-assisted work and complete validation before pushing it. Do not finalize an AI-assisted commit message until the developer has supplied this exact statement.
 
