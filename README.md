@@ -17,7 +17,8 @@ Testing will be conducted in two phases. Phase 1 will evaluate six factors at a 
 ## Local Immich performance stack
 
 The repository owns one Docker Compose stack for Immich, cAdvisor, Prometheus,
-and Grafana. Machine learning is out of scope for this evaluation, so it is
+and Grafana, plus exporters for PostgreSQL and Redis latency. A local database from
+before those exporters needs resetting; see `monitoring/README.md`. Machine learning is out of scope for this evaluation, so it is
 disabled through `config/immich-config.json` and its container is not part of
 the stack. Copy and review the environment file before starting it:
 
@@ -55,6 +56,11 @@ SIZE_LEVEL=medium RESOLUTION=4k CONCURRENT_UPLOADS=2 DURATION=1m ./scripts/run-l
 | `UPLOAD_TIMEOUT` | `10m` | k6 request timeout |
 | `K6_MEMORY_BUDGET_BYTES` | 75% of Docker memory | Memory guard budget |
 | `UPLOAD_MBPS` | `1000` | Link speed assumed by the disk check |
+
+`run.sh` limits `immich-server`, `database`, and `redis` to the cores in
+`IMMICH_CPUSET`, which defaults to `0-3`. For example, `IMMICH_CPUSET=0-1 ./run.sh`
+gives them two cores. Lower it if your machine has fewer than 4 cores. The workflow
+sets this from its `cpu_cores` input.
 
 Generation requires ffmpeg. Photo 480p × `large` cannot be produced, so use
 `PHOTO_RATIO=0` for that combination. See

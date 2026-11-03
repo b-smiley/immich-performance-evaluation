@@ -127,4 +127,15 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 touch "${LOAD_FINISHED_FILE}"
 wait "${queue_watcher_pid}" ||
   printf '::warning::The queue watcher exited unexpectedly, so catch-up was not measured.\n' >&2
+
+prometheus_url="${K6_PROMETHEUS_RW_SERVER_URL:-http://localhost:9090/api/v1/write}"
+prometheus_url="$(printf '%s' "${prometheus_url%/api/v1/write}" | sed 's/host.docker.internal/localhost/')"
+python3 "${SCRIPT_DIR}/summarize_service_latency.py" \
+  --prometheus-url "${prometheus_url}" \
+  --results-dir "${RESULTS_DIR}" ||
+  printf '::warning::The service latency summary exited unexpectedly.\n' >&2
+python3 "${SCRIPT_DIR}/summarize_resource_usage.py" \
+  --prometheus-url "${prometheus_url}" \
+  --results-dir "${RESULTS_DIR}" ||
+  printf '::warning::The resource usage summary exited unexpectedly.\n' >&2
 exit "${k6_status}"

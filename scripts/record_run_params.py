@@ -15,6 +15,7 @@ PARAMETERS = {
     "uploads": "concurrent_uploads",
     "users": "users",
     "think": "think_time_seconds",
+    "cores": "cpu_cores",
     "dur": "duration",
     "photo": "photo_ratio",
     "size": "size_level",
