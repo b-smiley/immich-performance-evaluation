@@ -73,7 +73,7 @@ def check_memory(args: argparse.Namespace) -> int:
         print(
             f"Error: {args.vus} VUs need about {required / MB:,.0f}MB of k6 memory "
             f"(largest fixture {largest / MB:,.1f}MB), but the budget is {budget / MB:,.0f}MB. "
-            f"At most {max_vus} VUs fit; reduce VUS or set K6_MEMORY_BUDGET_BYTES.",
+            f"At most {max_vus} VUs fit; reduce CONCURRENT_UPLOADS or set K6_MEMORY_BUDGET_BYTES.",
             file=sys.stderr,
         )
         return 1
@@ -97,11 +97,11 @@ def check_disk(args: argparse.Namespace) -> int:
         basis = f"{args.iterations} iterations"
     else:
         seconds = parse_duration(args.duration)
-        # Every iteration sleeps at least one second, and uploads cannot
-        # outrun the network link.
-        by_iterations = args.vus * seconds * mean
-        by_bandwidth = args.upload_mbps / 8 * MB * seconds
-        uploaded = min(by_iterations, by_bandwidth)
+        # Uploads cannot outrun the network link. Without think time, the
+        # link is the only limit on how fast iterations can repeat.
+        uploaded = args.upload_mbps / 8 * MB * seconds
+        if args.think_time > 0:
+            uploaded = min(uploaded, args.vus * seconds / args.think_time * mean)
         basis = f"{args.vus} VUs for {args.duration} at <= {args.upload_mbps:g}Mb/s"
 
     path = args.path.resolve()
@@ -113,7 +113,7 @@ def check_disk(args: argparse.Namespace) -> int:
         print(
             f"Error: {basis} could write about {estimate / MB:,.0f}MB to {path}, "
             f"but only {free / MB:,.0f}MB is free. Set ITERATIONS, shorten DURATION, "
-            "or reduce VUS (raise UPLOAD_MBPS only if the link is really faster).",
+            "or reduce CONCURRENT_UPLOADS (raise UPLOAD_MBPS only if the link is really faster).",
             file=sys.stderr,
         )
         return 1
@@ -137,6 +137,7 @@ def main() -> int:
     source.add_argument("--size-level", choices=list(SIZE_RANGES["photo"]))
     disk.add_argument("--path", type=Path, required=True)
     disk.add_argument("--vus", type=int, required=True)
+    disk.add_argument("--think-time", type=float, default=0)
     disk.add_argument("--duration", default="30s")
     disk.add_argument("--iterations", type=int, default=0)
     disk.add_argument("--photo-ratio", type=float, default=0.5)

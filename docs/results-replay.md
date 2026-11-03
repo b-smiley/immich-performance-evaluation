@@ -11,7 +11,7 @@ From Git Bash:
 ```bash
 cp .env.example .env
 ./run.sh
-VUS=1 DURATION=30s PHOTO_RATIO=0.5 SIZE_LEVEL=small RESOLUTION=1080p \
+CONCURRENT_UPLOADS=1 DURATION=30s PHOTO_RATIO=0.5 SIZE_LEVEL=small RESOLUTION=1080p \
   ./scripts/run-load-test.sh
 ./scripts/collect-results.sh
 ```
@@ -100,7 +100,7 @@ Each **Immich load test** artifact name records the run and its inputs as
 `_`-separated `key=value` pairs after the `immich-load` prefix:
 
 ```text
-immich-load_run=41483415709_role=server_vus=1_dur=30s_photo=0.5_size=small_res=1080p_iters=none_seed=533
+immich-load_run=41483415709_role=server_uploads=1_users=1_think=0_dur=30s_photo=0.5_size=small_res=1080p_iters=none_seed=533
 ```
 
 Parse a name in Python with:
@@ -113,7 +113,9 @@ dict(pair.split("=", 1) for pair in name.split("_")[1:])
 |---|---|
 | `run` | GitHub Actions run ID |
 | `role` | `server` or `client` artifact |
-| `vus` | `vus` |
+| `uploads` | `concurrent_uploads` |
+| `users` | `users` |
+| `think` | `think_time_seconds` |
 | `dur` | `duration` |
 | `photo` | `photo_ratio` |
 | `size` | `size_level` |
@@ -123,6 +125,9 @@ dict(pair.split("=", 1) for pair in name.split("_")[1:])
 
 `dur` always records the input as given, but k6 ignores it when `iters` is not
 `none`. Account for this when grouping results by duration.
+
+Earlier artifacts use `vus=` instead of `uploads=`, `users=`, and `think=`. Those
+runs paused for 1 second after each upload, with one account.
 
 Input values may only contain letters, digits, and `.`, so the workflow fails
 at its first step for any other value.
@@ -152,6 +157,15 @@ only to view trends over time. Runs recorded before these percentiles were added
 have only p99 in Prometheus and no p75 or p99 in `k6-summary.json`; compute any
 missing values from `k6.json`.
 
+Report throughput from `successful_uploads` and `successful_upload_bytes` in
+`k6-summary.json`. They count uploads answered with HTTP 2xx, including accepted
+duplicates, which are also counted in `duplicate_uploads`. Payload is the file
+bytes sent, excluding multipart and protocol overhead. Divide by 1,000,000 for
+MB/s. k6 calculates these rates over the whole test duration, including any
+graceful stop of up to 30 seconds. `http_reqs` and `data_sent` still count every
+attempt and all overhead. The **k6 Prometheus** dashboard shows both throughput
+measures over time, split by photo and video.
+
 The **Immich Overview** dashboard can show, per Compose service:
 
 - container CPU usage, as a percentage of one core
@@ -179,9 +193,26 @@ raw files remain available for independent analysis:
 
 - `data/results/k6.json`
 - `data/results/k6-summary.json`
+- `data/results/queue-summary.json`
+- `data/results/queue-stats.jsonl`
 - `data/results/prometheus-tsdb.tar.gz`
 - `data/results/compose.log`
 - `data/results/compose-ps.txt`
+
+`queue-summary.json` reports background job catch-up, as defined in
+[the run matrix](run-matrix.md#background-job-catch-up), along with peak backlog,
+failed jobs, and any jobs remaining per queue. `queue-stats.jsonl` records every
+poll. In a cloud run, both files are in the client artifact. Read `status` before
+using `catch_up_seconds`:
+
+- `drained`: the queues emptied, and `catch_up_seconds` is valid.
+- `timeout`: the queues had not emptied by the time limit, so
+  `catch_up_seconds` is empty. The true catch-up time is longer than
+  `drain_timeout_seconds`.
+- `error`: tracking failed, so catch-up was not measured. See `error`.
+
+Immich's `completed` count stayed at 0 in testing, so do not use it to count
+processed jobs.
 
 The official Grafana k6 dashboard is provisioned automatically as **k6
 Prometheus**. It uses the k6 metrics written through Prometheus remote write;

@@ -30,11 +30,40 @@ photos are infeasible, 1080p large photos are clamped to about 10–12 MB, and
 three workload compositions and all four upload levels, as specified in the
 proposal; it does not vary the other four factors.
 
-The Phase 1 factors A and B are distinct in the design. The current load-test
-harness has only one concurrency control (`VUS`), so it cannot independently
-set concurrent users and concurrent uploads. Execution of this matrix requires
-an operational definition and separate control for those factors; do not map
-both columns to `VUS` and claim they were independently tested.
+The Phase 1 factors A and B are distinct in the design, and the harness sets
+them separately:
+
+- **Concurrent uploads (`CONCURRENT_UPLOADS`)** is the total number of uploads in
+  flight, which is the k6 virtual user count. With `THINK_TIME_SECONDS=0`, the
+  default, each virtual user starts its next upload as soon as the last one
+  finishes.
+- **Concurrent users (`USERS`)** is the number of Immich accounts those uploads
+  rotate through. For example, 25 users with 1 upload means one upload at a time,
+  cycling evenly across 25 accounts. Users only upload; they do not browse.
+
+Runs from before these controls are not comparable with later ones. Earlier runs
+paused for 1 second after each upload, so far fewer uploads were in flight than
+their `VUS` setting suggests.
+
+### Feasible upload levels
+
+k6 holds each in-flight file in memory, so `scripts/preflight.py` refuses runs
+that do not fit. This table applies its limit of about 3x the largest possible
+file per upload to the 12,537 MB budget seen on the client runner. It uses each
+size level's upper bound, so actual fixtures may fit slightly more.
+
+| Size level | Workload | 1 | 25 | 100 | 1000 |
+|---|---|:---:|:---:|:---:|:---:|
+| small | photo-only | Yes | Yes | Yes | Yes |
+| small | video-only or mixed | Yes | Yes | Yes | No |
+| medium | photo-only | Yes | Yes | Yes | No |
+| medium | video-only or mixed | Yes | Yes | No | No |
+| large | photo-only | Yes | Yes | No | No |
+| large | video-only or mixed | Yes | No | No | No |
+
+Phase 2's 1000-upload video and mixed runs therefore cannot run as designed on this
+client at any size level. For Phase 1, see
+[the feasibility of each run](#feasibility-of-the-phase-1-runs).
 
 ## Phase 1: 8-run fractional factorial, three repeats
 
@@ -146,12 +175,11 @@ python3 scripts/generate_phase2_run_order.py
 
 The generator uses Python's `random.Random` with fixed seed `5332026`; it
 shuffles the 36 individual runs, not condition-sized blocks. Keep the checked-in
-CSV as the run record and follow its `run_order` sequence. Map each `concurrent_uploads` value to `VUS` in
-`scripts/run-load-test.sh`, and set `PHOTO_RATIO` from the row (`1.0`
-photo-only, `0.0` video-only, `0.5` mixed). Keep concurrent users constant at a
-value selected before testing; the current harness cannot independently enforce
-that while varying `VUS`, so resolve this execution gap before treating Phase 2
-as a controlled test of upload concurrency alone.
+CSV as the run record and follow its `run_order` sequence. Map each
+`concurrent_uploads` value to `CONCURRENT_UPLOADS` in
+`scripts/run-load-test.sh`, and set `PHOTO_RATIO` from the row (`1.0` photo-only,
+`0.0` video-only, `0.5` mixed). Keep `USERS` constant at a value selected before
+testing.
 
 ## Machine learning scope
 
@@ -175,14 +203,26 @@ with later ones because they included failing ML jobs and an idle ML container.
    and end times, and any errors under a distinct results directory. Do not
    overwrite a prior run's artifacts.
 
-The current `scripts/run-load-test.sh` passes a constant `VUS` and `DURATION`
-to k6; it does not implement a ramping profile or provide an automated
-backlog-clear signal. Its single `VUS` control also cannot independently vary
-concurrent users and concurrent uploads. The procedure above therefore
-describes the required protocol, but concurrency controls, ramping, and the
-measurement/drain boundaries need operational support before execution.
+The current `scripts/run-load-test.sh` passes constant `CONCURRENT_UPLOADS` and
+`DURATION` values to k6; it does not implement a ramping profile. The procedure
+above therefore describes the required protocol, but ramping and the measurement
+boundaries need operational support before execution.
 
 Report throughput, p95 upload latency, and error rate.
+
+## Background job catch-up
+
+`scripts/run-load-test.sh` polls Immich's `GET /api/queues` every 5 seconds and
+keeps the run open after k6 exits, so server metrics continue through catch-up.
+Background processing has caught up when every queue has no active, waiting,
+delayed, or paused jobs for 3 consecutive polls. Catch-up time runs from k6's exit
+to the first of those polls, with a resolution of about 5 seconds.
+
+Tracking stops `DRAIN_TIMEOUT_SECONDS` (default 1800) after k6 exits. The server
+job waits 45 minutes for the client, and fixture generation, k6, and catch-up all
+share that time, so the default fits runs of up to about 10 minutes. For longer
+runs, lower the limit with the workflow's `drain_timeout_seconds` input or raise
+the wait in `.github/workflows/immich-load-test.yml`.
 
 ## Open questions
 
@@ -191,13 +231,8 @@ Report throughput, p95 upload latency, and error rate.
 - How will the load generator implement and timestamp the ramp, five-minute
   hold, and measurement window? The current k6 script only accepts fixed
   concurrency and duration.
-- What are the operational definitions of concurrent users versus concurrent
-  uploads, and how will the harness control them independently? The current
-  script exposes only one `VUS` setting.
-- What fixed concurrent-user value should Phase 2 use while upload concurrency
-  varies?
-- What backlog metric and threshold determine that background processing has
-  cleared, and how will metric collection continue through the drain period?
+- What fixed `USERS` value should Phase 2 use while upload concurrency varies?
+  It currently defaults to 1.
 - What is the actual free disk space on the runners? The estimated disk
   thresholds (about 83 GB for some runs) are unverified and must be checked.
 - How will fixtures be pregenerated instead of generated on every run, and

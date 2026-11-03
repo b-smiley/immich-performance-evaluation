@@ -33,12 +33,16 @@ fresh stack. Generate the small photo and video fixtures and run k6 with:
 ./scripts/run-load-test.sh
 ```
 
-The workload accepts `VUS`, `DURATION`, `PHOTO_RATIO`, `IMMICH_URL`, and
-`RESULTS_DIR` environment overrides. Upload fixtures are generated for one
+The workload accepts `CONCURRENT_UPLOADS`, `USERS`, `THINK_TIME_SECONDS`,
+`DURATION`, `PHOTO_RATIO`, `IMMICH_URL`, `RESULTS_DIR`, and
+`DRAIN_TIMEOUT_SECONDS` environment overrides. See
+[the run matrix](docs/run-matrix.md) for how uploads and users are defined. The script
+stays running after k6 exits until background jobs catch up or the time limit is
+reached, printing progress every 30 seconds. Upload fixtures are generated for one
 size level and resolution per run:
 
 ```bash
-SIZE_LEVEL=medium RESOLUTION=4k VUS=2 DURATION=1m ./scripts/run-load-test.sh
+SIZE_LEVEL=medium RESOLUTION=4k CONCURRENT_UPLOADS=2 DURATION=1m ./scripts/run-load-test.sh
 ```
 
 | Variable | Default | Meaning |
