@@ -188,6 +188,38 @@ machine-learning container is not part of the stack. Background processing in
 these runs therefore covers non-ML jobs only. Earlier runs are not comparable
 with later ones because they included failing ML jobs and an idle ML container.
 
+## CPU cores
+
+`immich-server`, `database`, and `redis` share `cpu_cores` hardware threads, as if
+Immich ran on a machine of that size. Any whole number up to the server runner's thread
+count works, currently 4, so levels beyond this matrix only need the input changed;
+counts above 4 also need a larger runner. The workflow fails if the applied limit does not
+match, and records it in `cpu-limits.json`.
+
+Keep these limits in mind when comparing levels:
+
+- `cpu_cores` counts hardware threads, not physical cores. The server runner has 4
+  threads on 2 physical cores, with threads 0 and 1 sharing a core and 2 and 3 sharing
+  the other. `cpu_cores=2` is therefore one physical core, and `cpu_cores=4` is two.
+- Runners of the same type can have different CPUs: one of seven checked runs was Intel
+  and the rest AMD. `cpu-limits.json` records the CPU for each run.
+- Monitoring, Tailscale, and system work are not limited. They can use the other
+  cores at lower levels, but compete with Immich at the runner's full core count.
+- Immich runs the same number of concurrent jobs at every level, so jobs compete more
+  heavily at lower levels than they would on a server tuned for that size.
+- Immich's `Detected CPU Cores` log line, recorded as `immich_detected_cores`, reports
+  the host's core count at every level because it does not read the pinned cores. Use
+  `pinned_cores` and `nproc` to confirm the limit. Immich only uses this value to enlarge
+  its thread pool above 4 cores, so it has no effect on the current 4-core runner, but a
+  larger runner would need checking.
+
+## Monitoring overhead
+
+Service latency adds `pg_stat_statements` and two exporter containers to the stack.
+Treat runs from before and after these additions as separate sets, because their
+overhead has not been measured reliably. See
+[service latency results](results-replay.md).
+
 ## Procedure for each run
 
 1. Apply the run's factor settings and clean/reset Immich to the same defined
@@ -239,8 +271,6 @@ the wait in `.github/workflows/immich-load-test.yml`.
   where will they be stored? Large videos can take up to about 30 minutes to
   generate.
   See [the fixture decision](upload-fixture-decision.md) for fixture details.
-- How will CPU core limits be set and verified consistently for each Phase 1
-  run?
 - How should the randomized order of Phase 1's 15 repeated runs be generated
   and preserved?
 - How will throughput, p95 upload latency, and error rate be defined and

@@ -140,6 +140,111 @@
       ],
       "title": "Running container count",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Time from the upload being sent to the first response byte, measured by k6 and including network round-trip time. Each line is one workload kind.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "k6_http_req_waiting_p95",
+          "legendFormat": "{{kind}} p95",
+          "refId": "A"
+        }
+      ],
+      "title": "API latency: k6 waiting time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Mean statement execution time from pg_stat_statements.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 16
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(pg_stat_statements_seconds_total{job=\"postgres\"}[1m])) / sum(rate(pg_stat_statements_calls_total{job=\"postgres\"}[1m])) * 1000",
+          "legendFormat": "mean",
+          "refId": "A"
+        }
+      ],
+      "title": "PostgreSQL latency: mean query time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Mean command execution time inside Redis, excluding the exporter's own commands.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(redis_commands_duration_seconds_total{job=\"redis\",cmd!~\"info|latency\\\\|.*|client\\\\|list|config\\\\|.*|slowlog\\\\|.*|commandlog\\\\|.*|command\\\\|.*\"}[1m])) / sum(rate(redis_commands_total{job=\"redis\",cmd!~\"info|latency\\\\|.*|client\\\\|list|config\\\\|.*|slowlog\\\\|.*|commandlog\\\\|.*|command\\\\|.*\"}[1m])) * 1000",
+          "legendFormat": "mean",
+          "refId": "A"
+        }
+      ],
+      "title": "Redis latency: mean command time",
+      "type": "timeseries"
     }
   ],
   "refresh": "15s",

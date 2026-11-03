@@ -100,7 +100,7 @@ Each **Immich load test** artifact name records the run and its inputs as
 `_`-separated `key=value` pairs after the `immich-load` prefix:
 
 ```text
-immich-load_run=41483415709_role=server_uploads=1_users=1_think=0_dur=30s_photo=0.5_size=small_res=1080p_iters=none_seed=533
+immich-load_run=41483415709_role=server_uploads=1_users=1_think=0_cores=4_dur=30s_photo=0.5_size=small_res=1080p_iters=none_seed=533
 ```
 
 Parse a name in Python with:
@@ -116,6 +116,7 @@ dict(pair.split("=", 1) for pair in name.split("_")[1:])
 | `uploads` | `concurrent_uploads` |
 | `users` | `users` |
 | `think` | `think_time_seconds` |
+| `cores` | `cpu_cores` |
 | `dur` | `duration` |
 | `photo` | `photo_ratio` |
 | `size` | `size_level` |
@@ -127,7 +128,8 @@ dict(pair.split("=", 1) for pair in name.split("_")[1:])
 `none`. Account for this when grouping results by duration.
 
 Earlier artifacts use `vus=` instead of `uploads=`, `users=`, and `think=`. Those
-runs paused for 1 second after each upload, with one account.
+runs paused for 1 second after each upload, with one account. Artifacts without
+`cores=` had no CPU limit and used the runner's 4 cores.
 
 Input values may only contain letters, digits, and `.`, so the workflow fails
 at its first step for any other value.
@@ -172,6 +174,7 @@ The **Immich Overview** dashboard can show, per Compose service:
 - memory working set, which excludes reclaimable file cache
 - memory usage including cache
 - running container count
+- API, PostgreSQL, and Redis latency
 
 Raw Prometheus queries are also available for metrics such as
 `k6_http_reqs_total`, `k6_vus`, `k6_http_req_duration_p50`,
@@ -195,6 +198,9 @@ raw files remain available for independent analysis:
 - `data/results/k6-summary.json`
 - `data/results/queue-summary.json`
 - `data/results/queue-stats.jsonl`
+- `data/results/service-latency.json`
+- `data/results/resource-usage.json`
+- `data/results/cpu-limits.json`
 - `data/results/prometheus-tsdb.tar.gz`
 - `data/results/compose.log`
 - `data/results/compose-ps.txt`
@@ -213,6 +219,62 @@ using `catch_up_seconds`:
 
 Immich's `completed` count stayed at 0 in testing, so do not use it to count
 processed jobs.
+
+`cpu-limits.json`, in the server artifact, records the cores applied to
+`immich-server`, `database`, and `redis`. The workflow fails if they differ from
+`cpu_cores`, so a run with this file used the core count it was labeled with. Its
+`cpu` section records the runner's CPU vendor, model, and which hardware threads
+share each physical core. Check it before comparing runs, because runners of the
+same type can have different CPUs. For earlier runs, see cAdvisor's `Machine:` line
+in `compose.log`.
+
+`service-latency.json` reports each service's latency, also in the client artifact
+for a cloud run. Read `status` first: `error` means latency was not measured, and
+`error` explains why. Otherwise, `phases.load` covers k6's first to last data
+point, and `phases.catch_up` runs from the end of load until the queues drain, or
+until tracking stopped if `queue_status` is not `drained`. Each service reports
+`mean_ms`, `operations`, and `total_seconds`:
+
+| Service | Source | Measures |
+|---|---|---|
+| `api` | k6 `http_req_waiting` | Time from the upload being sent to the first response byte. Load phase only. |
+| `postgres` | `pg_stat_statements` | Mean statement execution time, excluding the exporter's own queries. |
+| `redis` | Redis command statistics | Mean command execution time, excluding the exporter's own commands. |
+
+- **API is measured from the client.** Immich v3.3.5 exposes no request timing,
+  even with all telemetry enabled, so this figure includes network round-trip time.
+- **Do not add the three figures together.** They are means of different operations,
+  and API time already includes time spent waiting on PostgreSQL and Redis. The team
+  uses API response time as the overall figure.
+- **An upload makes many database and Redis calls,** so compare `total_seconds` as
+  well as `mean_ms` when looking for where time goes.
+- **Prometheus scrapes every 15 seconds,** so phase boundaries are accurate to about
+  15 seconds. The exporters keep only their reported statements and commands, so
+  totals can differ slightly from the database's own.
+
+`resource-usage.json` reports CPU and memory for each Compose service, including
+monitoring, plus `runner` for the whole machine, so analysis does not need Prometheus.
+It is in the client artifact for a cloud run. Runs from before this file existed need
+the Prometheus archive for these metrics. Read `status` first: `error` means usage was
+not recorded, and `error` explains why. Local runs on Docker Desktop normally report
+this, because cAdvisor has no per-container data there.
+
+- `phases.load` and `phases.catch_up` use the same time ranges as
+  `service-latency.json`. Each service reports `mean` and `peak` for `cpu_percent`,
+  `memory_working_set_mb`, and `memory_usage_mb`.
+- `samples` holds one row per service for each Prometheus scrape, about every 15
+  seconds, from the start of load to the end of catch-up.
+- `cpu_percent` is a percentage of one hardware thread, so 200 means two threads' worth.
+  Working set excludes reclaimable file cache; usage includes it.
+- A sample's `cpu_percent` is the average over its `interval_seconds`, the time since
+  the previous scrape, so `peak` misses spikes shorter than about 15 seconds. Mean CPU
+  is weighted by those intervals.
+- A sample counts toward the phase that contains the middle of its interval, so a phase
+  boundary is accurate to about 8 seconds and the first sample of `load` can include
+  some idle time. A phase shorter than one scrape may have no samples, which leaves its
+  values empty.
+- These figures come from raw scrapes, so `peak` can be higher than the Immich Overview
+  panels, which average CPU over 1 minute.
 
 The official Grafana k6 dashboard is provisioned automatically as **k6
 Prometheus**. It uses the k6 metrics written through Prometheus remote write;
