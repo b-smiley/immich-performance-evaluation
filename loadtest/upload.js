@@ -1,20 +1,29 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 import { randomBytes } from "k6/crypto";
+import exec from "k6/execution";
 import { open as openFile, SeekMode } from "k6/experimental/fs";
 import { Counter } from "k6/metrics";
 
 const endpoint = __ENV.IMMICH_URL || "http://host.docker.internal:2283";
-const apiKey = __ENV.IMMICH_API_KEY;
+// Uploads rotate through one API key per account; see docs/run-matrix.md.
+const apiKeys = (__ENV.IMMICH_API_KEYS || __ENV.IMMICH_API_KEY || "").split(",");
 const photoRatio = Number(__ENV.PHOTO_RATIO || "0.5");
-const vus = Number(__ENV.VUS || "1");
+const concurrentUploads = Number(__ENV.CONCURRENT_UPLOADS || "1");
+const thinkTimeSeconds = Number(__ENV.THINK_TIME_SECONDS || "0");
 const iterations = Number(__ENV.ITERATIONS || "0");
 const uploadTimeout = __ENV.UPLOAD_TIMEOUT || "10m";
 const readChunkBytes = 4 * 1024 * 1024;
 
+if (!(thinkTimeSeconds >= 0)) {
+  throw new Error(`THINK_TIME_SECONDS must be a non-negative number, got "${__ENV.THINK_TIME_SECONDS}"`);
+}
+
 const manifest = JSON.parse(open("/fixtures/manifest.json"));
 const pools = { photo: [], video: [] };
 const duplicateUploads = new Counter("duplicate_uploads");
+const successfulUploads = new Counter("successful_uploads");
+const successfulUploadBytes = new Counter("successful_upload_bytes", true);
 
 // k6/experimental/fs loads each file once and shares it between VUs, unlike
 // open(), which copies the file into every VU.
@@ -27,8 +36,8 @@ const duplicateUploads = new Counter("duplicate_uploads");
 export const options = {
   scenarios: {
     upload: iterations > 0
-      ? { executor: "shared-iterations", vus, iterations, maxDuration: __ENV.MAX_DURATION || "6h" }
-      : { executor: "constant-vus", vus, duration: __ENV.DURATION || "30s" },
+      ? { executor: "shared-iterations", vus: concurrentUploads, iterations, maxDuration: __ENV.MAX_DURATION || "6h" }
+      : { executor: "constant-vus", vus: concurrentUploads, duration: __ENV.DURATION || "30s" },
   },
   thresholds: { http_req_failed: ["rate<0.05"] },
   summaryTrendStats: ["avg", "min", "max", "p(50)", "p(75)", "p(90)", "p(95)", "p(99)"],
@@ -111,6 +120,7 @@ export default async function () {
   const pool = usePhoto ? pools.photo : pools.video;
   const { fixture, file } = pool[Math.floor(Math.random() * pool.length)];
   const data = await readUnique(file, fixture);
+  const apiKey = apiKeys[exec.scenario.iterationInTest % apiKeys.length];
   const tags = {
     kind: fixture.kind,
     size_level: fixture.size_level,
@@ -138,7 +148,11 @@ export default async function () {
     "asset created (not duplicate)": () => status === "created",
   }, tags);
   if (status === "duplicate") duplicateUploads.add(1, tags);
-  sleep(1);
+  if (response.status >= 200 && response.status < 300) {
+    successfulUploads.add(1, tags);
+    successfulUploadBytes.add(data.length, tags);
+  }
+  if (thinkTimeSeconds > 0) sleep(thinkTimeSeconds);
 }
 
 export function handleSummary(data) {

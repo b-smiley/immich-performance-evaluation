@@ -1,7 +1,9 @@
 name: Immich load test
 run-name: >-
   Immich load test:
-  vus=${{ inputs.vus || '1' }}
+  uploads=${{ inputs.concurrent_uploads || '1' }}
+  users=${{ inputs.users || '1' }}
+  think=${{ inputs.think_time_seconds || '0' }}
   dur=${{ inputs.duration || '30s' }}
   photo=${{ inputs.photo_ratio || '0.5' }}
   size=${{ inputs.size_level || 'small' }}
@@ -17,10 +19,20 @@ on:
         required: true
         default: 30s
         type: string
-      vus:
-        description: Number of concurrent k6 virtual users
+      concurrent_uploads:
+        description: Total uploads in flight (k6 virtual users)
         required: true
         default: "1"
+        type: string
+      users:
+        description: Immich accounts the uploads rotate through
+        required: true
+        default: "1"
+        type: string
+      think_time_seconds:
+        description: Pause after each upload, in seconds (0 for back-to-back uploads)
+        required: true
+        default: "0"
         type: string
       photo_ratio:
         description: Fraction of uploads that should be photos
@@ -49,6 +61,11 @@ on:
         required: false
         default: "533"
         type: string
+      drain_timeout_seconds:
+        description: Seconds to wait for background jobs to catch up after k6 exits
+        required: false
+        default: "1800"
+        type: string
   workflow_call:
     inputs:
       duration:
@@ -56,10 +73,20 @@ on:
         required: false
         default: 30s
         type: string
-      vus:
-        description: Number of concurrent k6 virtual users
+      concurrent_uploads:
+        description: Total uploads in flight (k6 virtual users)
         required: false
         default: "1"
+        type: string
+      users:
+        description: Immich accounts the uploads rotate through
+        required: false
+        default: "1"
+        type: string
+      think_time_seconds:
+        description: Pause after each upload, in seconds (0 for back-to-back uploads)
+        required: false
+        default: "0"
         type: string
       photo_ratio:
         description: Fraction of uploads that should be photos
@@ -86,12 +113,17 @@ on:
         required: false
         default: "533"
         type: string
+      drain_timeout_seconds:
+        description: Seconds to wait for background jobs to catch up after k6 exits
+        required: false
+        default: "1800"
+        type: string
 
 permissions:
   contents: read
 
 env:
-  RUN_PARAMS: vus=${{ inputs.vus || '1' }}_dur=${{ inputs.duration || '30s' }}_photo=${{ inputs.photo_ratio || '0.5' }}_size=${{ inputs.size_level || 'small' }}_res=${{ inputs.resolution || '1080p' }}_iters=${{ inputs.iterations || 'none' }}_seed=${{ inputs.fixture_seed || '533' }}
+  RUN_PARAMS: uploads=${{ inputs.concurrent_uploads || '1' }}_users=${{ inputs.users || '1' }}_think=${{ inputs.think_time_seconds || '0' }}_dur=${{ inputs.duration || '30s' }}_photo=${{ inputs.photo_ratio || '0.5' }}_size=${{ inputs.size_level || 'small' }}_res=${{ inputs.resolution || '1080p' }}_iters=${{ inputs.iterations || 'none' }}_seed=${{ inputs.fixture_seed || '533' }}
 
 jobs:
   server:
@@ -129,7 +161,8 @@ jobs:
       - name: Check server disk
         env:
           SIZE_LEVEL: ${{ inputs.size_level || 'small' }}
-          VUS: ${{ inputs.vus || '1' }}
+          CONCURRENT_UPLOADS: ${{ inputs.concurrent_uploads || '1' }}
+          THINK_TIME_SECONDS: ${{ inputs.think_time_seconds || '0' }}
           DURATION: ${{ inputs.duration || '30s' }}
           ITERATIONS: ${{ inputs.iterations }}
           PHOTO_RATIO: ${{ inputs.photo_ratio || '0.5' }}
@@ -137,7 +170,8 @@ jobs:
           python3 scripts/preflight.py disk \
             --size-level "$SIZE_LEVEL" \
             --path data/upload \
-            --vus "$VUS" \
+            --vus "$CONCURRENT_UPLOADS" \
+            --think-time "$THINK_TIME_SECONDS" \
             --duration "$DURATION" \
             --iterations "${ITERATIONS:-0}" \
             --photo-ratio "$PHOTO_RATIO"
@@ -246,12 +280,15 @@ jobs:
       - name: Run k6
         env:
           DURATION: ${{ inputs.duration || '30s' }}
-          VUS: ${{ inputs.vus || '1' }}
+          CONCURRENT_UPLOADS: ${{ inputs.concurrent_uploads || '1' }}
+          USERS: ${{ inputs.users || '1' }}
+          THINK_TIME_SECONDS: ${{ inputs.think_time_seconds || '0' }}
           PHOTO_RATIO: ${{ inputs.photo_ratio || '0.5' }}
           SIZE_LEVEL: ${{ inputs.size_level || 'small' }}
           RESOLUTION: ${{ inputs.resolution || '1080p' }}
           ITERATIONS: ${{ inputs.iterations }}
           FIXTURE_SEED: ${{ inputs.fixture_seed || '533' }}
+          DRAIN_TIMEOUT_SECONDS: ${{ inputs.drain_timeout_seconds || '1800' }}
           RESULTS_DIR: ${{ github.workspace }}/data/results
         run: bash ./scripts/run-load-test.sh
       - name: Signal server

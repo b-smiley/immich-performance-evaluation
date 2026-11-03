@@ -12,7 +12,9 @@ from pathlib import Path
 
 # Artifact-name key and the workflow input it records.
 PARAMETERS = {
-    "vus": "vus",
+    "uploads": "concurrent_uploads",
+    "users": "users",
+    "think": "think_time_seconds",
     "dur": "duration",
     "photo": "photo_ratio",
     "size": "size_level",
