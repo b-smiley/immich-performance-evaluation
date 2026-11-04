@@ -1,0 +1,2 @@
+run_order,notes,duration,concurrent_uploads,users,think_time_seconds,cpu_cores,photo_ratio,size_level,resolution
+1,Short run to check the batch workflow. photo_ratio is blank on purpose to test defaults,30s,1,1,0,4,,small,1080p

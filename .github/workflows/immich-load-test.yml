@@ -72,6 +72,12 @@ on:
         required: false
         default: "1800"
         type: string
+      environment:
+        description: Environment supplying secrets (loadtest-batch is for the batch workflow)
+        required: false
+        default: loadtest
+        type: choice
+        options: [loadtest, loadtest-batch]
   workflow_call:
     inputs:
       duration:
@@ -129,6 +135,11 @@ on:
         required: false
         default: "1800"
         type: string
+      environment:
+        description: Environment supplying secrets (loadtest or loadtest-batch)
+        required: false
+        default: loadtest
+        type: string
 
 permissions:
   contents: read
@@ -140,7 +151,7 @@ jobs:
   server:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    environment: loadtest
+    environment: ${{ inputs.environment || 'loadtest' }}
     env:
       SERVER_NAME: immich-server-${{ github.run_id }}
       SIGNAL_PORT: "5000"
@@ -246,7 +257,7 @@ jobs:
   client:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
-    environment: loadtest
+    environment: ${{ inputs.environment || 'loadtest' }}
     env:
       SERVER_NAME: immich-server-${{ github.run_id }}
       SIGNAL_PORT: "5000"

@@ -83,6 +83,9 @@ key at runtime.
 For the complete local test, GitHub Actions artifact download, and Grafana
 replay procedure, see
 [Results replay and Grafana dashboards](docs/results-replay.md).
+
+To run many load tests in sequence from a CSV, see
+[Batch load test runs](docs/batch-runs.md).
 ## Decisions
 
 For design decisions made during the project, see the `/docs` folder.

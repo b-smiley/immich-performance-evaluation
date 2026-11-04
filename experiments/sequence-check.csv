@@ -1,0 +1,4 @@
+run_order,replicate,notes,duration,concurrent_uploads,users,think_time_seconds,cpu_cores,photo_ratio,size_level,resolution
+1,1,Rows 1 and 3 are identical on purpose to check repeats stay separate,30s,1,1,0,4,0.5,small,1080p
+2,1,Different settings so the order is easy to see,30s,5,1,0,2,1.0,small,480p
+3,2,Repeat of row 1,30s,1,1,0,4,0.5,small,1080p

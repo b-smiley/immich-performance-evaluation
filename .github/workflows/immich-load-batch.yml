@@ -1,10 +1,166 @@
 name: Immich load batch
+run-name: >-
+  Immich load batch:
+  ${{ inputs.matrix_file }}${{ inputs.dry_run && ' (dry run)' || '' }}
+
 on:
   workflow_dispatch:
+    inputs:
+      matrix_file:
+        description: CSV file name in experiments/, one load test per row
+        required: true
+        type: string
+      dry_run:
+        description: Validate the CSV and simulate the order without running any tests
+        required: true
+        default: true
+        type: boolean
+
 permissions:
   contents: read
+
+# Real batches must not overlap. Dry runs use no test runners, so they can run alongside one.
+concurrency:
+  group: immich-load-batch-${{ inputs.dry_run && 'dry' || 'real' }}
+  cancel-in-progress: false
+
+env:
+  DRY_RUN_SLEEP_SECONDS: "30"
+  # Poll interval, chosen to stay well under the GITHUB_TOKEN limit of 1,000 requests an hour.
+  POLL_SECONDS: "30"
+
 jobs:
-  placeholder:
+  plan:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
     steps:
-      - run: echo "Placeholder. The real workflow is being tested on a branch."
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate batch file
+        id: plan
+        env:
+          MATRIX_FILE: ${{ inputs.matrix_file }}
+        run: python3 scripts/plan_batch.py "$MATRIX_FILE"
+
+  # The load tests use loadtest-batch, which has no reviewers, so this is the batch's one approval.
+  approve:
+    needs: plan
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: loadtest
+    steps:
+      - name: Record approval
+        run: echo "Batch approved by a loadtest reviewer."
+
+  run:
+    name: Row ${{ matrix.row }}
+    needs: [plan, approve]
+    if: >-
+      ${{
+        !cancelled()
+        && needs.plan.result == 'success'
+        && (needs.approve.result == 'success' || (inputs.dry_run && needs.approve.result == 'skipped'))
+      }}
+    runs-on: ubuntu-latest
+    # Covers one load test's 60-minute jobs plus runner queueing.
+    timeout-minutes: 180
+    permissions:
+      actions: write
+      contents: read
+    strategy:
+      # A failed row still leaves the remaining rows to run.
+      fail-fast: false
+      # Only one load test at a time, so runs cannot share hardware.
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ROW: ${{ matrix.row }}
+      LABELS: ${{ matrix.labels }}
+      ROW_INPUTS: ${{ matrix.inputs }}
+    steps:
+      - name: Simulate row
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "Row $ROW started at $(date --utc +%FT%TZ)"
+          echo "Labels: $LABELS"
+          echo "Would dispatch immich-load-test on $GITHUB_REF_NAME with: $ROW_INPUTS"
+          sleep "$DRY_RUN_SLEEP_SECONDS"
+          echo "Row $ROW finished at $(date --utc +%FT%TZ)"
+          echo "| $ROW | $LABELS | \`$ROW_INPUTS\` | $(date --utc +%FT%TZ) |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Dispatch load test
+        id: dispatch
+        if: ${{ !inputs.dry_run }}
+        run: |
+          payload="$(jq --null-input \
+            --arg ref "$GITHUB_REF_NAME" \
+            --argjson inputs "$ROW_INPUTS" \
+            '{ref: $ref, inputs: ($inputs + {environment: "loadtest-batch"})}')"
+          # This API version returns the new run's ID, so repeats with identical inputs cannot be confused.
+          response="$(gh api --method POST \
+            --header "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/immich-load-test.yml/dispatches" \
+            --input - <<< "$payload")"
+          run_id="$(jq --raw-output '.workflow_run_id // empty' <<< "$response")"
+          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "Error: the dispatch response had no run ID: $response" >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+          echo "Row $ROW started load test $url at $(date --utc +%FT%TZ)"
+          echo "| $ROW | $LABELS | \`$ROW_INPUTS\` | $url |" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for load test
+        if: ${{ !inputs.dry_run }}
+        env:
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: |
+          errors=0
+          while :; do
+            sleep "$POLL_SECONDS"
+            if ! state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+              --jq '.status + " " + (.conclusion // "")')"; then
+              # A brief API failure should not abandon a load test that is still running.
+              errors=$(( errors + 1 ))
+              if (( errors >= 10 )); then
+                echo "Error: could not read run $RUN_ID after $errors attempts." >&2
+                exit 1
+              fi
+              continue
+            fi
+            errors=0
+            read -r status conclusion <<< "$state"
+            if [ "$status" = completed ]; then
+              echo "Row $ROW finished at $(date --utc +%FT%TZ) with conclusion: $conclusion"
+              [ "$conclusion" = success ]
+              exit
+            fi
+          done
+
+      # A cancelled or timed-out row must not leave its load test running, or the next row would overlap it.
+      - name: Cancel unfinished load test
+        if: ${{ always() && steps.dispatch.outputs.run_id != '' }}
+        env:
+          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
+        run: |
+          run_status() {
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .status
+          }
+          if [ "$(run_status)" = completed ]; then
+            exit 0
+          fi
+          echo "Cancelling load test $RUN_ID."
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/cancel" || true
+          # Hold this row until the load test has stopped, so its cleanup cannot overlap the next row.
+          for _ in $(seq 1 20); do
+            sleep 15
+            if [ "$(run_status)" = completed ]; then
+              exit 0
+            fi
+          done
+          echo "Error: load test $RUN_ID was still running 5 minutes after being cancelled." >&2
+          exit 1
