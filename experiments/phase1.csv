@@ -1,0 +1,16 @@
+run_order,replicate,notes,duration,concurrent_uploads,users,think_time_seconds,cpu_cores,photo_ratio,size_level,resolution
+1,1,Design run 1,5m,1,1,0,4,1.0,large,4k
+2,1,Design run 6,5m,1,25,0,1,0.0,small,4k
+3,1,Design run 2,5m,1,1,0,1,0.0,large,480p
+4,1,Design run 3,5m,1000,1,0,1,1.0,small,4k
+5,1,Design run 5,5m,1,25,0,4,1.0,small,480p
+6,2,Design run 5,5m,1,25,0,4,1.0,small,480p
+7,2,Design run 6,5m,1,25,0,1,0.0,small,4k
+8,2,Design run 2,5m,1,1,0,1,0.0,large,480p
+9,2,Design run 1,5m,1,1,0,4,1.0,large,4k
+10,2,Design run 3,5m,1000,1,0,1,1.0,small,4k
+11,3,Design run 3,5m,1000,1,0,1,1.0,small,4k
+12,3,Design run 1,5m,1,1,0,4,1.0,large,4k
+13,3,Design run 2,5m,1,1,0,1,0.0,large,480p
+14,3,Design run 6,5m,1,25,0,1,0.0,small,4k
+15,3,Design run 5,5m,1,25,0,4,1.0,small,480p
