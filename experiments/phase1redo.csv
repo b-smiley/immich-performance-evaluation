@@ -1,0 +1,4 @@
+run_order,replicate,notes,duration,concurrent_uploads,users,think_time_seconds,cpu_cores,photo_ratio,size_level,resolution
+1,1,Design run 3,5m,1000,1,0,1,1.0,small,4k
+2,2,Design run 3,5m,1000,1,0,1,1.0,small,4k
+3,3,Design run 3,5m,1000,1,0,1,1.0,small,4k

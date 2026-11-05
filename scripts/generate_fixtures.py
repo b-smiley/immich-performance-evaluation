@@ -91,16 +91,20 @@ class PhotoEncoder:
         # Fully random 16-bit rows are incompressible.
         return low, round(self.width * self.height * 6 * 0.99)
 
-    def encode(self, output_stem: Path, target: int, seed: int) -> tuple[Path, dict[str, object]]:
+    def encode(
+        self, output_stem: Path, target: int, seed: int, size_range: tuple[int, int]
+    ) -> tuple[Path, dict[str, object]]:
         jpeg_path = output_stem.with_suffix(".jpg")
         if target <= self.jpeg(jpeg_path, 2, 100, seed):
-            return jpeg_path, self._fit_jpeg(jpeg_path, target, seed)
+            return jpeg_path, self._fit_jpeg(jpeg_path, target, seed, size_range)
         jpeg_path.unlink()
         bit_depth = 8 if target <= self.width * self.height * 3 * 0.97 else 16
         png_path = output_stem.with_suffix(".png")
         return png_path, self._fit_png(png_path, target, seed, bit_depth)
 
-    def _fit_jpeg(self, output: Path, target: int, seed: int) -> dict[str, object]:
+    def _fit_jpeg(
+        self, output: Path, target: int, seed: int, size_range: tuple[int, int]
+    ) -> dict[str, object]:
         # Size grows with noise at the best quality, and shrinks as the
         # quantiser rises at zero noise; search whichever axis brackets target.
         if target >= self.jpeg(output, 2, 0, seed):
@@ -110,17 +114,24 @@ class PhotoEncoder:
             axis, low, high = "quality", 2, 31
             size_of = lambda value: -self.jpeg(output, value, 0, seed)
             target = -target
-        best = None
+        # At high resolutions one noise or quality step can move the size by
+        # hundreds of KB, so the closest candidate may land in the neighbouring
+        # size level; prefer the closest candidate that stays in range.
+        best = closest = None
         while low <= high:
             middle = (low + high) // 2
             size = size_of(middle)
-            if best is None or abs(size - target) < abs(best[1] - target):
+            if closest is None or abs(size - target) < abs(closest[1] - target):
+                closest = (middle, size)
+            in_range = size_range[0] <= abs(size) < size_range[1]
+            if in_range and (best is None or abs(size - target) < abs(best[1] - target)):
                 best = (middle, size)
             if size < target:
                 low = middle + 1
             else:
                 high = middle - 1
-        value = best[0]
+        # With no in-range candidate, fall back so the range check reports it.
+        value = (best or closest)[0]
         quality, noise = (2, value) if axis == "noise" else (value, 0)
         self.jpeg(output, quality, noise, seed)
         return {"format": "jpg", "jpeg_quality": quality, "noise": noise, "bit_depth": 8}
@@ -204,7 +215,9 @@ class VideoEncoder:
         probe.unlink()
         return low, sys.maxsize
 
-    def encode(self, output_stem: Path, target: int, seed: int) -> tuple[Path, dict[str, object]]:
+    def encode(
+        self, output_stem: Path, target: int, seed: int, size_range: tuple[int, int]
+    ) -> tuple[Path, dict[str, object]]:
         output = output_stem.with_suffix(".mp4")
         frames = max(1, round(target * 8 / self.bitrate * FPS))
         for _ in range(4):
@@ -271,7 +284,12 @@ def generate_pool(
                 return previous
 
         print(f"Generating {stem} (target {target / MB:.2f}MB)", flush=True)
-        path, details = encoder.encode(output_dir / stem, target, file_seed(seed, kind, resolution, size_level, index))
+        path, details = encoder.encode(
+            output_dir / stem,
+            target,
+            file_seed(seed, kind, resolution, size_level, index),
+            (nominal_low, nominal_high),
+        )
         size = path.stat().st_size
         if not nominal_low <= size < nominal_high:
             raise SystemExit(
