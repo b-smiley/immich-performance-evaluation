@@ -18,6 +18,22 @@ LATENCY_COLUMNS = [f"upload_p{p}_ms" for p in PERCENTILES]
 SERVICES = ("immich-server", "database", "redis")
 # Matches MB in generate_fixtures.py.
 MB = 1_000_000
+LATENCY_FILE = "service-latency.json"
+RESOURCE_FILE = "resource-usage.json"
+# Column -> (client file, key path under its "phases").
+SERVICE_SOURCES = {
+    "api_waiting_p95_ms": (LATENCY_FILE, ("load", "services", "api", "percentiles_ms", "p(95)")),
+    "postgres_mean_ms": (LATENCY_FILE, ("load", "services", "postgres", "mean_ms")),
+    "redis_mean_ms": (LATENCY_FILE, ("load", "services", "redis", "mean_ms")),
+    "immich_cpu_mean_pct": (RESOURCE_FILE, ("load", "services", "immich-server", "cpu_percent", "mean")),
+    "catch_up_immich_cpu_mean_pct": (
+        RESOURCE_FILE, ("catch_up", "services", "immich-server", "cpu_percent", "mean")
+    ),
+    "immich_mem_mean_mb": (RESOURCE_FILE, ("load", "services", "immich-server", "memory_working_set_mb", "mean")),
+    "immich_mem_peak_mb": (RESOURCE_FILE, ("load", "services", "immich-server", "memory_working_set_mb", "peak")),
+    "database_mem_peak_mb": (RESOURCE_FILE, ("load", "services", "database", "memory_working_set_mb", "peak")),
+}
+SERVICE_COLUMNS = list(SERVICE_SOURCES)
 
 EPILOG = """\
 input layout (as written by gh run download):
@@ -34,7 +50,16 @@ columns:
   mb_per_s                   successful_upload_bytes.values.rate / 1,000,000
   queue_status, catch_up_s   queue-summary.json status, catch_up_seconds
   peak_backlog_<queue>, _max queue-summary.json peak_backlog
-  cpu_model                  server cpu-limits.json cpu.model
+  api_waiting_p95_ms         service-latency.json phases.load.services
+  postgres_mean_ms             .api.percentiles_ms["p(95)"], .postgres.mean_ms,
+  redis_mean_ms                .redis.mean_ms
+  immich_cpu_mean_pct        resource-usage.json phases.load.services
+  immich_mem_mean_mb           ["immich-server"].cpu_percent.mean,
+  immich_mem_peak_mb           .memory_working_set_mb.mean, .peak
+  database_mem_peak_mb         and .database.memory_working_set_mb.peak
+  catch_up_immich_cpu_mean_pct the same CPU mean in phases.catch_up
+                             cpu_percent is not capped at 100 (240 = ~2.4 vCPUs)
+  cpu_model                 server cpu-limits.json cpu.model
   pinned_cores               services.*.pinned_cores, empty if services disagree
   expected_cores             cpu-limits.json expected_cores
   cpu_model_flag             1 if cpu_model differs from the most common model in
@@ -139,6 +164,15 @@ def load_run(run_id: str, folders: dict[str, Path]) -> tuple[dict, dict]:
     present = [peak for peak in peaks.values() if peak is not None]
     metrics["peak_backlog_max"] = max(present) if present else None
 
+    phases = {}
+    for name in (LATENCY_FILE, RESOURCE_FILE):
+        summary = read(client, name)
+        if summary is not None and dig(summary, "status") != "ok":
+            warn(f"run {run_id} {name} status is {dig(summary, 'status')!r}: {dig(summary, 'error')}")
+        phases[name] = dig(summary, "phases")
+    for column, (name, keys) in SERVICE_SOURCES.items():
+        metrics[column] = number(dig(phases[name], *keys))
+
     model = dig(limits, "cpu", "model")
     metrics["cpu_model"] = model if isinstance(model, str) and model else None
     pinned = {number(dig(limits, "services", service, "pinned_cores")) for service in SERVICES}
@@ -241,7 +275,7 @@ def main() -> int:
 
     metric_columns = [
         *LATENCY_COLUMNS, "error_rate", "uploads_per_s", "mb_per_s", "catch_up_s",
-        *backlog_columns, "peak_backlog_max",
+        *backlog_columns, "peak_backlog_max", *SERVICE_COLUMNS,
     ]
     if args.group:
         if args.exclude_flagged:
@@ -255,7 +289,7 @@ def main() -> int:
     else:
         columns = [
             "run_id", *factor_columns, *LATENCY_COLUMNS, "error_rate", "uploads_per_s", "mb_per_s",
-            "queue_status", "catch_up_s", *backlog_columns, "peak_backlog_max",
+            "queue_status", "catch_up_s", *backlog_columns, "peak_backlog_max", *SERVICE_COLUMNS,
             "cpu_model", "pinned_cores", "expected_cores", "cpu_model_flag",
         ]
     write_csv(rows, columns, args.output)
