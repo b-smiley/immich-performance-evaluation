@@ -29,6 +29,12 @@ SERVICE_SOURCES = {
     "catch_up_immich_cpu_mean_pct": (
         RESOURCE_FILE, ("catch_up", "services", "immich-server", "cpu_percent", "mean")
     ),
+    "database_cpu_mean_pct": (RESOURCE_FILE, ("load", "services", "database", "cpu_percent", "mean")),
+    "catch_up_database_cpu_mean_pct": (
+        RESOURCE_FILE, ("catch_up", "services", "database", "cpu_percent", "mean")
+    ),
+    "redis_cpu_mean_pct": (RESOURCE_FILE, ("load", "services", "redis", "cpu_percent", "mean")),
+    "catch_up_redis_cpu_mean_pct": (RESOURCE_FILE, ("catch_up", "services", "redis", "cpu_percent", "mean")),
     "immich_mem_mean_mb": (RESOURCE_FILE, ("load", "services", "immich-server", "memory_working_set_mb", "mean")),
     "immich_mem_peak_mb": (RESOURCE_FILE, ("load", "services", "immich-server", "memory_working_set_mb", "peak")),
     "database_mem_peak_mb": (RESOURCE_FILE, ("load", "services", "database", "memory_working_set_mb", "peak")),
@@ -54,11 +60,15 @@ columns:
   postgres_mean_ms             .api.percentiles_ms["p(95)"], .postgres.mean_ms,
   redis_mean_ms                .redis.mean_ms
   immich_cpu_mean_pct        resource-usage.json phases.load.services
-  immich_mem_mean_mb           ["immich-server"].cpu_percent.mean,
-  immich_mem_peak_mb           .memory_working_set_mb.mean, .peak
-  database_mem_peak_mb         and .database.memory_working_set_mb.peak
-  catch_up_immich_cpu_mean_pct the same CPU mean in phases.catch_up
+  database_cpu_mean_pct        .<service>.cpu_percent.mean for immich-server,
+  redis_cpu_mean_pct           database and redis
+  catch_up_immich_cpu_mean_pct the same CPU means in phases.catch_up
+  catch_up_database_cpu_mean_pct
+  catch_up_redis_cpu_mean_pct
                              cpu_percent is not capped at 100 (240 = ~2.4 vCPUs)
+  immich_mem_mean_mb         resource-usage.json phases.load.services
+  immich_mem_peak_mb           ["immich-server"].memory_working_set_mb.mean, .peak
+  database_mem_peak_mb         and .database.memory_working_set_mb.peak
   cpu_model                 server cpu-limits.json cpu.model
   pinned_cores               services.*.pinned_cores, empty if services disagree
   expected_cores             cpu-limits.json expected_cores
