@@ -245,6 +245,151 @@
       ],
       "title": "Redis latency: mean command time",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "CPU of the API and background worker Node processes and the exiftool processes the worker starts, from process-exporter every 5 seconds. ffmpeg (with ffprobe) comes from the CPU of the worker's finished children, so each process counts when it exits, and a long transcode shows as one burst at its end.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (groupname) (rate(namedprocess_namegroup_cpu_seconds_total[1m])) * 100",
+          "legendFormat": "{{groupname}}",
+          "refId": "A"
+        },
+        {
+          "expr": "(sum(rate(immich_worker_finished_children_cpu_seconds_total[1m])) - (sum(rate(immich_worker_finished_tracked_children_cpu_seconds_total[1m])) or vector(0))) * 100",
+          "legendFormat": "ffmpeg",
+          "refId": "B"
+        }
+      ],
+      "title": "Process CPU inside immich-server (% of one core)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Successful background jobs per second, by job, from Immich's worker telemetry.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (immich_job) (rate(immich_jobs_total{job=\"immich-worker\",outcome=\"success\"}[1m]))",
+          "legendFormat": "{{immich_job}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker jobs completed per second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Jobs the background worker is running at once, by queue, from Immich's worker telemetry.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "immich_queue_jobs{job=\"immich-worker\",state=\"active\"}",
+          "legendFormat": "{{queue}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker active jobs by queue",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Seconds per second the background worker spends in each internal step (repository method), from Immich's worker telemetry. The event and job repositories are left out because they wrap the other steps. Calls overlap, so the total can exceed 1.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (repository, method) (rate(immich_repository_duration_ms_sum{job=\"immich-worker\",repository!~\"event|job\"}[1m])) / 1000)",
+          "legendFormat": "{{repository}}.{{method}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Worker time by step (top 10)",
+      "type": "timeseries"
     }
   ],
   "refresh": "15s",

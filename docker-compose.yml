@@ -2,7 +2,7 @@ name: immich-performance
 
 services:
   immich-server:
-    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v3.4.2}
     cpuset: ${IMMICH_CPUSET:-0-3}
     volumes:
       - ${UPLOAD_LOCATION:-./data/upload}:/data
@@ -12,6 +12,12 @@ services:
       - .env
     environment:
       IMMICH_CONFIG_FILE: /config/immich-config.json
+      # Serves metrics on port 8081 for the API and 8082 for the background worker.
+      IMMICH_TELEMETRY_INCLUDE: all
+      # Immich listens on :: by default, which makes its metrics library build the
+      # invalid URL http://:::8082/ and answer every request with 400 (seen in
+      # v3.4.2). An IPv4 address avoids that, and Docker networking uses IPv4.
+      IMMICH_HOST: 0.0.0.0
     ports:
       - "${IMMICH_PORT:-2283}:2283"
     depends_on:
@@ -74,6 +80,39 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Splits CPU and memory inside immich-server between the API, the background
+  # worker, and the exiftool processes it starts. With the host's PID
+  # namespace, the container's own /proc lists every container's processes. A
+  # bind-mounted /proc does not on Docker Desktop.
+  process-exporter:
+    image: ncabatoff/process-exporter:v0.8.7
+    pid: host
+    command:
+      - -procfs=/proc
+      - -config.path=/config/process-exporter.yml
+      - -threads=false
+      # Immich's processes start as node and rename themselves, so match names on
+      # every scrape rather than only when a process is first seen.
+      - -recheck
+      # Otherwise the API, which the worker starts, is counted as the worker's
+      # child before it renames itself.
+      - -children=false
+    volumes:
+      - ./monitoring/process-exporter/config.yml:/config/process-exporter.yml:ro
+    restart: unless-stopped
+
+  # Measures the CPU of ffmpeg and ffprobe, which mostly exit before process-exporter
+  # sees them, from the CPU Linux adds to the worker when its children finish.
+  child-cpu-exporter:
+    image: python:3.13.9-alpine3.22
+    pid: host
+    command:
+      - python3
+      - /exporter/child_cpu_exporter.py
+    volumes:
+      - ./monitoring/child-cpu-exporter:/exporter:ro
     restart: unless-stopped
 
   cadvisor:

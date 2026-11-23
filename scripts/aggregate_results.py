@@ -20,6 +20,7 @@ SERVICES = ("immich-server", "database", "redis")
 MB = 1_000_000
 LATENCY_FILE = "service-latency.json"
 RESOURCE_FILE = "resource-usage.json"
+WORKER_FILE = "worker-usage.json"
 # Column -> (client file, key path under its "phases").
 SERVICE_SOURCES = {
     "api_waiting_p95_ms": (LATENCY_FILE, ("load", "services", "api", "percentiles_ms", "p(95)")),
@@ -38,6 +39,19 @@ SERVICE_SOURCES = {
     "immich_mem_mean_mb": (RESOURCE_FILE, ("load", "services", "immich-server", "memory_working_set_mb", "mean")),
     "immich_mem_peak_mb": (RESOURCE_FILE, ("load", "services", "immich-server", "memory_working_set_mb", "peak")),
     "database_mem_peak_mb": (RESOURCE_FILE, ("load", "services", "database", "memory_working_set_mb", "peak")),
+    "api_cpu_mean_pct": (WORKER_FILE, ("load", "processes", "immich-api", "cpu_percent", "mean")),
+    "worker_cpu_mean_pct": (WORKER_FILE, ("load", "processes", "immich-worker", "cpu_percent", "mean")),
+    "catch_up_worker_cpu_mean_pct": (
+        WORKER_FILE, ("catch_up", "processes", "immich-worker", "cpu_percent", "mean")
+    ),
+    "ffmpeg_cpu_mean_pct": (WORKER_FILE, ("load", "ffmpeg", "cpu_percent", "mean")),
+    "catch_up_ffmpeg_cpu_mean_pct": (WORKER_FILE, ("catch_up", "ffmpeg", "cpu_percent", "mean")),
+    "unattributed_cpu_mean_pct": (WORKER_FILE, ("load", "unattributed", "cpu_percent", "mean")),
+    "catch_up_unattributed_cpu_mean_pct": (
+        WORKER_FILE, ("catch_up", "unattributed", "cpu_percent", "mean")
+    ),
+    "worker_jobs_per_s": (WORKER_FILE, ("load", "jobs", "success_per_s")),
+    "catch_up_worker_jobs_per_s": (WORKER_FILE, ("catch_up", "jobs", "success_per_s")),
 }
 SERVICE_COLUMNS = list(SERVICE_SOURCES)
 
@@ -69,6 +83,20 @@ columns:
   immich_mem_mean_mb         resource-usage.json phases.load.services
   immich_mem_peak_mb           ["immich-server"].memory_working_set_mb.mean, .peak
   database_mem_peak_mb         and .database.memory_working_set_mb.peak
+  api_cpu_mean_pct           worker-usage.json phases.load.processes
+  worker_cpu_mean_pct          .<group>.cpu_percent.mean for immich-api and
+                               immich-worker
+  ffmpeg_cpu_mean_pct        worker-usage.json phases.load.ffmpeg.cpu_percent.mean,
+                               ffmpeg and ffprobe from the worker's finished
+                               children; empty for runs before it was measured
+  unattributed_cpu_mean_pct  worker-usage.json phases.load.unattributed
+                               .cpu_percent.mean, immich-server CPU not covered
+                               by the groups and ffmpeg
+  catch_up_worker_cpu_mean_pct the same CPU means in phases.catch_up
+  catch_up_ffmpeg_cpu_mean_pct
+  catch_up_unattributed_cpu_mean_pct
+  worker_jobs_per_s          worker-usage.json phases.load.jobs.success_per_s
+  catch_up_worker_jobs_per_s   and phases.catch_up.jobs.success_per_s
   cpu_model                 server cpu-limits.json cpu.model
   pinned_cores               services.*.pinned_cores, empty if services disagree
   expected_cores             cpu-limits.json expected_cores
@@ -175,7 +203,7 @@ def load_run(run_id: str, folders: dict[str, Path]) -> tuple[dict, dict]:
     metrics["peak_backlog_max"] = max(present) if present else None
 
     phases = {}
-    for name in (LATENCY_FILE, RESOURCE_FILE):
+    for name in (LATENCY_FILE, RESOURCE_FILE, WORKER_FILE):
         summary = read(client, name)
         if summary is not None and dig(summary, "status") != "ok":
             warn(f"run {run_id} {name} status is {dig(summary, 'status')!r}: {dig(summary, 'error')}")

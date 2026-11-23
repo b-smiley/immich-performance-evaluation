@@ -1,0 +1,17 @@
+# Groups the processes inside immich-server. The first matching group wins, and
+# processes that match none, including any other process Immich starts, are not
+# reported. ffmpeg and ffprobe usually exit before a scrape sees them, so their CPU
+# comes from monitoring/child-cpu-exporter instead.
+process_names:
+  # The API worker.
+  - name: immich-api
+    comm:
+      - immich-api
+  # The main process, which runs the background (microservices) worker.
+  - name: immich-worker
+    comm:
+      - immich
+  # Metadata extraction, which runs exiftool through perl.
+  - name: exiftool
+    cmdline:
+      - exiftool
