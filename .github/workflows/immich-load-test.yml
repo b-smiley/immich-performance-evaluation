@@ -149,7 +149,10 @@ env:
 
 jobs:
   server:
-    runs-on: ubuntu-latest
+    # cAdvisor v0.52.1 cannot identify containers under the Docker version on the
+    # Ubuntu 26.04 image that ubuntu-latest moved to, so per-container CPU and
+    # memory go missing. Ubuntu 24.04 was the image used before the switch.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: ${{ inputs.environment || 'loadtest' }}
     env:

@@ -22,3 +22,72 @@ scrape_configs:
     static_configs:
       - targets:
           - redis-exporter:9121
+
+  # Immich telemetry. Both processes report the same metric names, so the job
+  # label is what tells the API and the background worker apart.
+  - job_name: immich-api
+    static_configs:
+      - targets:
+          - immich-server:8081
+    # Immich puts job, queue, and step names inside metric names, which queries
+    # cannot group by, so these rules move them into labels.
+    metric_relabel_configs: &immich-telemetry-labels
+      # immich_jobs_<job>_<outcome>_total -> immich_jobs_total{immich_job, outcome}
+      - source_labels: [__name__]
+        regex: immich_jobs_(.+)_([a-z]+)_total
+        target_label: immich_job
+        replacement: $1
+      - source_labels: [__name__]
+        regex: immich_jobs_(.+)_([a-z]+)_total
+        target_label: outcome
+        replacement: $2
+      - source_labels: [__name__]
+        regex: immich_jobs_(.+)_([a-z]+)_total
+        target_label: __name__
+        replacement: immich_jobs_total
+      # immich_queues_<queue>_<state> -> immich_queue_jobs{queue, state}
+      - source_labels: [__name__]
+        regex: immich_queues_(.+)_([a-z]+)
+        target_label: queue
+        replacement: $1
+      - source_labels: [__name__]
+        regex: immich_queues_(.+)_([a-z]+)
+        target_label: state
+        replacement: $2
+      - source_labels: [__name__]
+        regex: immich_queues_(.+)_([a-z]+)
+        target_label: __name__
+        replacement: immich_queue_jobs
+      # immich_<repo>_repository_<method>_duration_<part>, in ms ->
+      # immich_repository_duration_ms_<part>{repository, method}
+      - source_labels: [__name__]
+        regex: immich_(.+?)_repository_(.+)_duration_(bucket|sum|count)
+        target_label: repository
+        replacement: $1
+      - source_labels: [__name__]
+        regex: immich_(.+?)_repository_(.+)_duration_(bucket|sum|count)
+        target_label: method
+        replacement: $2
+      - source_labels: [__name__]
+        regex: immich_(.+?)_repository_(.+)_duration_(bucket|sum|count)
+        target_label: __name__
+        replacement: immich_repository_duration_ms_$3
+
+  - job_name: immich-worker
+    static_configs:
+      - targets:
+          - immich-server:8082
+    metric_relabel_configs: *immich-telemetry-labels
+
+  - job_name: process
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - process-exporter:9256
+
+  # CPU of the worker's finished children, mostly ffmpeg and ffprobe.
+  - job_name: child-cpu
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - child-cpu-exporter:9257

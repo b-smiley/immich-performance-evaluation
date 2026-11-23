@@ -75,8 +75,11 @@ Grafana is available at <http://localhost:3000>, Prometheus at
 <http://localhost:9090>, and cAdvisor at <http://localhost:8080>.
 
 The `Immich load test` workflow is manual-only. It starts Immich and monitoring
-on an x86 GitHub-hosted runner and runs k6 from a separate ARM runner over
-Tailscale. The `loadtest` environment must provide the Tailscale OAuth secrets and
+on an x86 GitHub-hosted Ubuntu 24.04 runner and runs k6 from a separate ARM runner over
+Tailscale. The Ubuntu version is pinned because cAdvisor cannot see individual
+containers on the Ubuntu 26.04 image. The Immich version is pinned through
+`IMMICH_VERSION` in `.env.example`; an existing local `.env` keeps its own value.
+The `loadtest` environment must provide the Tailscale OAuth secrets and
 `IMMICH_DB_PASSWORD`; the workflow creates the ephemeral test account and API
 key at runtime.
 

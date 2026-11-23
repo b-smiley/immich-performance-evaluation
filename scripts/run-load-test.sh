@@ -130,12 +130,9 @@ wait "${queue_watcher_pid}" ||
 
 prometheus_url="${K6_PROMETHEUS_RW_SERVER_URL:-http://localhost:9090/api/v1/write}"
 prometheus_url="$(printf '%s' "${prometheus_url%/api/v1/write}" | sed 's/host.docker.internal/localhost/')"
-python3 "${SCRIPT_DIR}/summarize_service_latency.py" \
+# Writes service-latency.json, resource-usage.json, and worker-usage.json.
+python3 "${SCRIPT_DIR}/summarize_run.py" \
   --prometheus-url "${prometheus_url}" \
   --results-dir "${RESULTS_DIR}" ||
-  printf '::warning::The service latency summary exited unexpectedly.\n' >&2
-python3 "${SCRIPT_DIR}/summarize_resource_usage.py" \
-  --prometheus-url "${prometheus_url}" \
-  --results-dir "${RESULTS_DIR}" ||
-  printf '::warning::The resource usage summary exited unexpectedly.\n' >&2
+  printf '::warning::The run summaries exited unexpectedly.\n' >&2
 exit "${k6_status}"

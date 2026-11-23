@@ -200,10 +200,16 @@ raw files remain available for independent analysis:
 - `data/results/queue-stats.jsonl`
 - `data/results/service-latency.json`
 - `data/results/resource-usage.json`
+- `data/results/worker-usage.json`
 - `data/results/cpu-limits.json`
 - `data/results/prometheus-tsdb.tar.gz`
 - `data/results/compose.log`
 - `data/results/compose-ps.txt`
+
+`scripts/summarize_run.py` writes `service-latency.json`, `resource-usage.json`, and
+`worker-usage.json` after each load test. To recreate them for a downloaded run, run it
+on the client artifact folder while the run is replaying:
+`python3 scripts/summarize_run.py --prometheus-url http://localhost:9091 --results-dir <folder>`.
 
 `queue-summary.json` reports background job catch-up, as defined in
 [the run matrix](run-matrix.md#background-job-catch-up), along with peak backlog,
@@ -257,7 +263,9 @@ monitoring, plus `runner` for the whole machine, so analysis does not need Prome
 It is in the client artifact for a cloud run. Runs from before this file existed need
 the Prometheus archive for these metrics. Read `status` first: `error` means usage was
 not recorded, and `error` explains why. Local runs on Docker Desktop normally report
-this, because cAdvisor has no per-container data there.
+this, because cAdvisor has no per-container data there. Cloud runs on the Ubuntu 26.04
+runner image, from about 5 November 2026 until the workflow was pinned to Ubuntu
+24.04, report it too, because cAdvisor could not identify containers there.
 
 - `phases.load` and `phases.catch_up` use the same time ranges as
   `service-latency.json`. Each service reports `mean` and `peak` for `cpu_percent`,
@@ -275,6 +283,73 @@ this, because cAdvisor has no per-container data there.
   values empty.
 - These figures come from raw scrapes, so `peak` can be higher than the Immich Overview
   panels, which average CPU over 1 minute.
+
+`worker-usage.json` reports what Immich's background worker did, which
+`resource-usage.json` cannot show because the worker shares the `immich-server`
+container with the API. It is in the client artifact for a cloud run, and uses the
+same `status`, `error`, and phase time ranges as `resource-usage.json`. Runs from
+before this file existed have no worker data, and Immich telemetry was off for them.
+A `warnings` list, when present, names parts that were not measured. Each phase has:
+
+| Field | Source | Measures |
+|---|---|---|
+| `processes` | process-exporter | `cpu_percent` and `memory_resident_mb` (`mean`, `peak`) for `immich-api`, `immich-worker`, and `exiftool`. |
+| `ffmpeg` | child CPU exporter | `cpu_seconds` and `cpu_percent.mean` for ffmpeg and ffprobe, from the CPU of the worker's finished children. |
+| `unattributed` | cAdvisor and the above | `cpu_percent.mean` of `immich-server` CPU from `resource-usage.json` less the groups and `ffmpeg`, or empty with a `reason`. |
+| `jobs` | worker telemetry | Jobs finished per job and outcome (`success`, `failed`, `skipped`), the totals, and `success_per_s`. `runs`, `runs_per_s`, and `mean_run_ms` cover every job the worker ran. |
+| `queues_active` | worker telemetry | `mean` and `peak` jobs running at once per queue. |
+| `steps` | worker telemetry | The 10 internal steps (repository methods), such as `media.transcode`, with the most `total_seconds`, with `calls` and `mean_ms`. |
+
+- **Process groups are set in `monitoring/process-exporter/config.yml`.** The worker
+  is Immich's main process, named `immich`; the API is `immich-api`. Processes that
+  match no group are left out, so the groups need not add up to the container's CPU.
+- **`exiftool` reads 0 when it never ran.** Empty `immich-api` or `immich-worker`
+  values mean the grouping failed, and a warning says so.
+- **Process CPU is scraped every 5 seconds.** A process that exits between scrapes
+  loses the CPU it used since the last one. The API, worker, and exiftool processes
+  run for the whole test, so this hardly affects them. `cpu_percent` follows the same
+  rules as `resource-usage.json`.
+- **ffmpeg CPU is measured when each process exits.** ffmpeg and ffprobe usually run
+  for well under a second, too briefly for process-exporter, so they are measured
+  differently: when the worker collects a finished child, Linux adds all of that
+  child's CPU to the worker's counters, which `monitoring/child-cpu-exporter` reads.
+  - A process counts in the phase in which it exits, so a long transcode counts all
+    at once at its end. There is no `peak` for the same reason.
+  - The worker's other children, such as exiftool processes that Immich replaces
+    after 500 tasks, are subtracted using their CPU as last seen, once a second. Up
+    to a second of each such process's final CPU is counted as ffmpeg.
+  - Runs before this measure existed have no reliable ffmpeg figure, so their CSV
+    ffmpeg cells are empty.
+- **`unattributed` is a cross-check.** Near 0 means the groups and ffmpeg account
+  for the container's CPU. It is approximate, because cAdvisor samples every 15
+  seconds and process-exporter every 5, so expect a few percent either way. It is
+  empty when `resource-usage.json` has no per-container data, as on Docker Desktop.
+- **The cross-check has been tested both ways.** In run 45298609977, `unattributed`
+  was -5% during the 2 minute load phase and +1% during the 14 minute catch-up.
+  A local test checked that it catches CPU the groups miss. It compared the
+  `immich-server` cgroup CPU (the counter cAdvisor reads) with the same parts over
+  three 120 second windows, with a one-thread busy loop running inside the container
+  in the middle one. Unattributed CPU was 0.4% before, 100.3% during the loop, and
+  0.5% after, so the loop showed up as almost exactly one thread.
+- **Immich counts only some kinds of job.** v3.4.2 has no counter for metadata
+  extraction, for example, so `by_job` and `success_per_s` (and the CSV's
+  `worker_jobs_per_s`) leave those jobs out. `runs` counts every job from the timing
+  of `job.run`, including skipped ones, which finish almost at once and lower
+  `mean_run_ms`. A job counts in the phase where it finished.
+- **Job counts can fall slightly short at the end of a phase.** Immich telemetry is
+  scraped every 15 seconds, so jobs that finish in the last seconds before a phase
+  ends may not have been scraped yet. In run 45298609977, 3,596 thumbnail jobs were
+  counted for 3,622 uploads, 0.7% short.
+- **Steps overlap.** The worker runs several jobs at once, and some steps call
+  others, so step times can add up to more than the phase length. Use them to rank
+  where the worker spends time, not as a breakdown of it. The `event` and `job`
+  repositories are left out because they are timed around the other steps.
+- **Prometheus renames the telemetry.** Immich puts names inside metric names, such
+  as `immich_jobs_asset_generate_thumbnails_success_total`. Prometheus stores this as
+  `immich_jobs_total{immich_job="asset_generate_thumbnails",outcome="success"}`, and
+  likewise `immich_queue_jobs{queue,state}` and
+  `immich_repository_duration_ms_*{repository,method}`. Step times are in
+  milliseconds.
 
 The official Grafana k6 dashboard is provisioned automatically as **k6
 Prometheus**. It uses the k6 metrics written through Prometheus remote write;
