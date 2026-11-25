@@ -12,12 +12,12 @@ fraction of that two-level design.
 
 | Factor | Phase 1 low (-1) | Phase 1 high (+1) | Phase 2 |
 |---|---|---|---|
-| A: Concurrent users | 1 | 25 | Held constant (value to be confirmed); requires an independent user-count control |
-| B: Concurrent uploads | 1 | 1000 | 1, 25, 100, 1000 |
+| A: Concurrent users | 1 | 25 | Held constant at 1 |
+| B: Concurrent uploads | 1 | 1000 | 1, 25, 100, 1000 (1000 for photo-only only) |
 | C: Workload composition | Photo-only (`PHOTO_RATIO=1.0`) | Video-only (`PHOTO_RATIO=0.0`) | Photo-only, video-only, mixed (`PHOTO_RATIO=0.5`) |
-| D: File size | Small (photo 0–1 MB; video 1–10 MB) | Large (photo 10–50 MB; video 100–1000 MB) | Fixed at the selected Phase 1 level |
-| E: Resolution | 480p | 4k | Fixed at the selected Phase 1 level |
-| F: CPU cores | 1 | 4 | Fixed at the selected Phase 1 level |
+| D: File size | Small (photo 0–1 MB; video 1–10 MB) | Large (photo 10–50 MB; video 100–1000 MB) | Held constant at small |
+| E: Resolution | 480p | 4k | Held constant at 4k |
+| F: CPU cores | 1 | 4 | 1 for the baseline; 4 for a two-condition comparison |
 
 Phase 1 uses the endpoints of the proposed levels. The middle levels (5
 concurrent users, 25 and 100 uploads, mixed workload, medium size (photo 1–10
@@ -26,9 +26,9 @@ in this fraction. Size ranges are
 per file type; see [the fixture decision](upload-fixture-decision.md) for
 range definitions. Not all size-resolution cells are generatable: 480p large
 photos are infeasible, 1080p large photos are clamped to about 10–12 MB, and
-4k small videos start at about 2.7 MB (a few frames). Phase 2 focuses on all
-three workload compositions and all four upload levels, as specified in the
-proposal; it does not vary the other four factors.
+4k small videos start at about 2.7 MB (a few frames). Phase 2 focuses on the
+three workload compositions and four upload levels specified in the proposal,
+plus a small CPU-core comparison; it holds the other factors constant.
 
 The Phase 1 factors A and B are distinct in the design, and the harness sets
 them separately:
@@ -61,8 +61,8 @@ size level's upper bound, so actual fixtures may fit slightly more.
 | large | photo-only | Yes | Yes | No | No |
 | large | video-only or mixed | Yes | No | No | No |
 
-Phase 2's 1000-upload video and mixed runs therefore cannot run as designed on this
-client at any size level. For Phase 1, see
+Phase 2's 1000-upload video and mixed runs therefore cannot run on this client at
+any size level, so [Phase 2](#phase-2-36-randomized-runs) drops them. For Phase 1, see
 [the feasibility of each run](#feasibility-of-the-phase-1-runs).
 
 ## Phase 1: 8-run fractional factorial, three repeats
@@ -164,22 +164,64 @@ separation than the selected Resolution III screen.
 
 ## Phase 2: 36 randomized runs
 
-Cross the three workload compositions (photo-only, video-only, mixed) with the
-four concurrent-upload levels (1, 25, 100, 1000), with three replicates per
-combination: 12 conditions and 36 runs total. Use the fixed randomized order
-in [`phase2-run-order.csv`](phase2-run-order.csv). Regenerate it with:
+Phase 2 has 12 conditions with three replicates each: 30 baseline runs at 1 CPU
+core and 6 cores-comparison runs at 4 CPU cores.
+
+**Baseline (30 runs, `cpu_cores=1`).** Cross the three workload compositions
+(photo-only, video-only, mixed) with the four concurrent-upload levels (1, 25,
+100, 1000), except video-only and mixed at 1000 uploads. That leaves 10
+conditions.
+
+**Cores comparison (6 runs, `cpu_cores=4`).** Repeat two baseline conditions at
+4 cores: photo-only at 1000 uploads and mixed at 100 uploads.
+
+**Dropped runs.** The video-only and mixed conditions at 1000 uploads are not
+run. They exceed k6's memory budget on the load generator at every size level,
+so preflight would refuse them (see [feasible upload levels](#feasible-upload-levels)).
+Without these 6 runs and with the 6 cores-comparison runs, the total stays at 36.
+
+Every run uses these constants:
+
+| Input | Value |
+|---|---|
+| `duration` | `5m` |
+| `users` | `1` |
+| `think_time_seconds` | `0` |
+| `size_level` | `small` |
+| `resolution` | `4k` |
+
+`photo_ratio` comes from the workload: `1.0` photo-only, `0.0` video-only, and
+`0.5` mixed.
+
+The generator writes two files from the same order:
+
+- [`phase2-run-order.csv`](phase2-run-order.csv), the run record, with
+  `run_order`, `replicate`, `workload_composition`, `photo_ratio`,
+  `concurrent_uploads`, and `cpu_cores`.
+- [`experiments/phase2.csv`](../experiments/phase2.csv), the
+  [batch file](batch-runs.md), with every load-test input and a `notes` label of
+  `baseline` or `cores-comparison`.
+
+Regenerate both with:
 
 ```bash
 python3 scripts/generate_phase2_run_order.py
 ```
 
 The generator uses Python's `random.Random` with fixed seed `5332026`; it
-shuffles the 36 individual runs, not condition-sized blocks. Keep the checked-in
-CSV as the run record and follow its `run_order` sequence. Map each
-`concurrent_uploads` value to `CONCURRENT_UPLOADS` in
-`scripts/run-load-test.sh`, and set `PHOTO_RATIO` from the row (`1.0` photo-only,
-`0.0` video-only, `0.5` mixed). Keep `USERS` constant at a value selected before
-testing.
+shuffles all 36 individual runs together, not condition-sized blocks, so the
+cores-comparison runs are interleaved with the baseline. Keep the checked-in
+CSVs as the run record and follow the `run_order` sequence.
+
+To run Phase 2, follow [batch load test runs](batch-runs.md) with the `Immich load
+batch` workflow and `matrix_file=phase2.csv`. Do a dry run first:
+
+```bash
+gh workflow run immich-load-batch.yml --ref main -f matrix_file=phase2.csv -f dry_run=true
+```
+
+Check the job summaries, then run it again with `dry_run=false`. Rows run in file
+order, which matches `run_order`.
 
 ## Machine learning scope
 
@@ -263,8 +305,6 @@ the wait in `.github/workflows/immich-load-test.yml`.
 - How will the load generator implement and timestamp the ramp, five-minute
   hold, and measurement window? The current k6 script only accepts fixed
   concurrency and duration.
-- What fixed `USERS` value should Phase 2 use while upload concurrency varies?
-  It currently defaults to 1.
 - What is the actual free disk space on the runners? The estimated disk
   thresholds (about 83 GB for some runs) are unverified and must be checked.
 - How will fixtures be pregenerated instead of generated on every run, and
