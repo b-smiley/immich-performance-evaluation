@@ -175,6 +175,12 @@ conditions.
 **Cores comparison (6 runs, `cpu_cores=4`).** Repeat two baseline conditions at
 4 cores: photo-only at 1000 uploads and mixed at 100 uploads.
 
+The cores comparison uses the heaviest feasible condition for each load type:
+photo-only at 1000 uploads (the most thumbnail and metadata work, and the
+condition where CPU saturated on 1 core in Phase 1), and mixed at 100 uploads
+(the heaviest feasible condition that includes video, since mixed at 1000 is
+infeasible). Two conditions keep the extra cost to 6 runs.
+
 **Dropped runs.** The video-only and mixed conditions at 1000 uploads are not
 run. They exceed k6's memory budget on the load generator at every size level,
 so preflight would refuse them (see [feasible upload levels](#feasible-upload-levels)).
