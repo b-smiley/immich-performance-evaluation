@@ -141,6 +141,8 @@ columns:
   worker_jobs_per_s          worker-usage.json phases.load.jobs.success_per_s
   catch_up_worker_jobs_per_s   and phases.catch_up.jobs.success_per_s
   cpu_model                 server cpu-limits.json cpu.model
+  server_cloud, server_region
+                             server run-params.json host.cloud, host.region
   pinned_cores               services.*.pinned_cores, empty if services disagree
   expected_cores             cpu-limits.json expected_cores
   cpu_model_flag             1 if cpu_model differs from the most common model in
@@ -448,6 +450,10 @@ def load_run(run_id: str, folders: dict[str, Path]) -> tuple[dict, dict]:
 
     model = dig(limits, "cpu", "model")
     metrics["cpu_model"] = model if isinstance(model, str) and model else None
+    server_host = dig(read(server, "run-params.json"), "host")
+    for field in ("cloud", "region"):
+        value = dig(server_host, field)
+        metrics[f"server_{field}"] = value if isinstance(value, str) else None
     pinned = {number(dig(limits, "services", service, "pinned_cores")) for service in SERVICES}
     pinned.discard(None)
     if len(pinned) > 1:
@@ -575,7 +581,8 @@ def main() -> int:
         columns = [
             "run_id", *factor_columns, *LATENCY_COLUMNS, "error_rate", "uploads_per_s", "mb_per_s",
             "queue_status", "catch_up_s", *backlog_columns, "peak_backlog_max", *SERVICE_COLUMNS,
-            *TIMELINE_COLUMNS, "cpu_model", "pinned_cores", "expected_cores", "cpu_model_flag",
+            *TIMELINE_COLUMNS, "cpu_model", "server_cloud", "server_region", "pinned_cores", "expected_cores",
+            "cpu_model_flag",
         ]
     write_csv(rows, columns, args.output)
     if args.curves:

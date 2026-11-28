@@ -79,5 +79,11 @@ review. Anyone with write access can still start a load test on `main` against
 - **Long fixture generation can fail a row.** The server waits 45 minutes for the
   client, and large videos can take up to about 30 of those to generate. See
   [background job catch-up](run-matrix.md#background-job-catch-up).
+- **A row without a direct path is retried.** Uploads must not go through a Tailscale
+  relay, so each load test stops within about 2 minutes of both runners joining if no
+  direct path forms (the **Wait for direct path** step). The batch then dispatches that
+  row again on fresh runners, up to `DIRECT_PATH_RETRIES` (3) times, before failing it.
+  A retried row starts later than its place in the run order. Each run records its
+  runner's `host` (kernel, cloud and region) in `run-params.json`.
 - **Row start order isn't guaranteed by GitHub.** GitHub documents the order matrix
   jobs are created, not the order they start. Check the recorded order after a batch.
