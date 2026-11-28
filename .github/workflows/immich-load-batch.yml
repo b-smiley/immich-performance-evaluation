@@ -28,6 +28,7 @@ env:
   DRY_RUN_SLEEP_SECONDS: "30"
   # Poll interval, chosen to stay well under the GITHUB_TOKEN limit of 1,000 requests an hour.
   POLL_SECONDS: "30"
+  DIRECT_PATH_RETRIES: "3"
 
 jobs:
   plan:
@@ -91,54 +92,66 @@ jobs:
           echo "Row $ROW finished at $(date --utc +%FT%TZ)"
           echo "| $ROW | $LABELS | \`$ROW_INPUTS\` | $(date --utc +%FT%TZ) |" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Dispatch load test
+      # A load test needs a direct path between its runners and stops early without
+      # one, so that case is retried on fresh runners before the row fails.
+      - name: Run load test
         id: dispatch
         if: ${{ !inputs.dry_run }}
         run: |
-          payload="$(jq --null-input \
-            --arg ref "$GITHUB_REF_NAME" \
-            --argjson inputs "$ROW_INPUTS" \
-            '{ref: $ref, inputs: ($inputs + {environment: "loadtest-batch"})}')"
-          # This API version returns the new run's ID, so repeats with identical inputs cannot be confused.
-          response="$(gh api --method POST \
-            --header "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/immich-load-test.yml/dispatches" \
-            --input - <<< "$payload")"
-          run_id="$(jq --raw-output '.workflow_run_id // empty' <<< "$response")"
-          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
-            echo "Error: the dispatch response had no run ID: $response" >&2
-            exit 1
-          fi
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
-          echo "Row $ROW started load test $url at $(date --utc +%FT%TZ)"
-          echo "| $ROW | $LABELS | \`$ROW_INPUTS\` | $url |" >> "$GITHUB_STEP_SUMMARY"
+          dispatch() {
+            payload="$(jq --null-input \
+              --arg ref "$GITHUB_REF_NAME" \
+              --argjson inputs "$ROW_INPUTS" \
+              '{ref: $ref, inputs: ($inputs + {environment: "loadtest-batch"})}')"
+            # This API version returns the new run's ID, so repeats with identical inputs cannot be confused.
+            response="$(gh api --method POST \
+              --header "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/immich-load-test.yml/dispatches" \
+              --input - <<< "$payload")"
+            run_id="$(jq --raw-output '.workflow_run_id // empty' <<< "$response")"
+            if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+              echo "Error: the dispatch response had no run ID: $response" >&2
+              exit 1
+            fi
+            echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run_id"
+            echo "Row $ROW started load test $url at $(date --utc +%FT%TZ)"
+            echo "| $ROW | $LABELS | \`$ROW_INPUTS\` | $url |" >> "$GITHUB_STEP_SUMMARY"
+          }
 
-      - name: Wait for load test
-        if: ${{ !inputs.dry_run }}
-        env:
-          RUN_ID: ${{ steps.dispatch.outputs.run_id }}
-        run: |
-          errors=0
-          while :; do
-            sleep "$POLL_SECONDS"
-            if ! state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
-              --jq '.status + " " + (.conclusion // "")')"; then
-              # A brief API failure should not abandon a load test that is still running.
-              errors=$(( errors + 1 ))
-              if (( errors >= 10 )); then
-                echo "Error: could not read run $RUN_ID after $errors attempts." >&2
-                exit 1
-              fi
-              continue
-            fi
+          wait_for_run() {
             errors=0
-            read -r status conclusion <<< "$state"
-            if [ "$status" = completed ]; then
-              echo "Row $ROW finished at $(date --utc +%FT%TZ) with conclusion: $conclusion"
-              [ "$conclusion" = success ]
-              exit
+            while :; do
+              sleep "$POLL_SECONDS"
+              if ! state="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+                --jq '.status + " " + (.conclusion // "")')"; then
+                # A brief API failure should not abandon a load test that is still running.
+                errors=$(( errors + 1 ))
+                if (( errors >= 10 )); then
+                  echo "Error: could not read run $run_id after $errors attempts." >&2
+                  exit 1
+                fi
+                continue
+              fi
+              errors=0
+              read -r status conclusion <<< "$state"
+              if [ "$status" = completed ]; then
+                echo "Row $ROW finished at $(date --utc +%FT%TZ) with conclusion: $conclusion"
+                return
+              fi
+            done
+          }
+
+          for attempt in $(seq 0 "$DIRECT_PATH_RETRIES"); do
+            dispatch
+            wait_for_run
+            [ "$conclusion" = success ] && exit 0
+            no_direct_path="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+              --jq '[.jobs[].steps[]? | select(.name == "Wait for direct path" and .conclusion == "failure")] | length')"
+            if [ "$no_direct_path" = 0 ] || [ "$attempt" = "$DIRECT_PATH_RETRIES" ]; then
+              exit 1
             fi
+            echo "Row $ROW had no direct path between its runners; retry $(( attempt + 1 )) of $DIRECT_PATH_RETRIES."
           done
 
       # A cancelled or timed-out row must not leave its load test running, or the next row would overlap it.

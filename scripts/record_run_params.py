@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 import re
 import sys
+import urllib.request
 from pathlib import Path
 
 # Artifact-name key and the workflow input it records.
@@ -25,6 +27,9 @@ PARAMETERS = {
 }
 # Artifact names split on "_" and "=", so values cannot contain either.
 VALUE_PATTERN = re.compile(r"[A-Za-z0-9.]+")
+# Instance metadata service; it answers only inside the cloud VM.
+METADATA = "http://169.254.169.254"
+METADATA_TIMEOUT_SECONDS = 2
 
 
 def parse_params(value: str) -> dict[str, str]:
@@ -46,6 +51,31 @@ def parse_params(value: str) -> dict[str, str]:
     if missing:
         raise ValueError(f"missing parameters: {', '.join(missing)}")
     return params
+
+
+def metadata(path: str, headers: dict[str, str], method: str = "GET") -> str | None:
+    request = urllib.request.Request(f"{METADATA}{path}", headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=METADATA_TIMEOUT_SECONDS) as response:
+            return response.read().decode().strip() or None
+    except OSError:
+        return None
+
+
+def host() -> dict[str, str | None]:
+    """Return the runner's kernel, cloud and region; unknown values are None."""
+    kernel = platform.release()
+    cloud = next((name for name in ("azure", "aws") if kernel.endswith(f"-{name}")), None)
+    region = None
+    if cloud == "azure":
+        region = metadata(
+            "/metadata/instance/compute/location?api-version=2021-02-01&format=text", {"Metadata": "true"}
+        )
+    elif cloud == "aws":
+        token = metadata("/latest/api/token", {"X-aws-ec2-metadata-token-ttl-seconds": "60"}, "PUT")
+        if token:
+            region = metadata("/latest/meta-data/placement/region", {"X-aws-ec2-metadata-token": token})
+    return {"kernel": kernel, "cloud": cloud, "region": region}
 
 
 def summary_table(params: dict[str, str]) -> str:
@@ -78,6 +108,7 @@ def main() -> int:
         "commit": os.environ.get("GITHUB_SHA"),
         "ref": os.environ.get("GITHUB_REF_NAME"),
         "parameters": {PARAMETERS[key]: params[key] for key in PARAMETERS},
+        "host": host(),
     }
     args.output.write_text(json.dumps(record, indent=2) + "\n")
 

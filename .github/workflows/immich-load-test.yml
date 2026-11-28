@@ -168,6 +168,8 @@ jobs:
           oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
           hostname: ${{ env.SERVER_NAME }}
+      - name: Wait for direct path
+        run: bash scripts/wait_direct_path.sh "immich-client-${{ github.run_id }}"
       - name: Free runner disk
         run: |
           df -h /
@@ -281,29 +283,12 @@ jobs:
           df -h /
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install --yes ffmpeg
-      - name: Resolve server endpoint
+      - name: Wait for direct path
         run: |
-          for attempt in $(seq 1 30); do
-            tailscale status --json > tailscale-status.json
-            if server_ip="$(python3 scripts/find_peer_ip.py tailscale-status.json "$SERVER_NAME" 2>/dev/null)"; then
-              if tailscale ping --timeout=5s "$server_ip" >/dev/null 2>&1; then
-                echo "IMMICH_URL=http://${server_ip}:2283" >> "$GITHUB_ENV"
-                echo "SERVER_IP=${server_ip}" >> "$GITHUB_ENV"
-                echo "K6_PROMETHEUS_RW_SERVER_URL=http://${server_ip}:9090/api/v1/write" >> "$GITHUB_ENV"
-                exit 0
-              fi
-            fi
-            server_ip="$(getent ahostsv4 "$SERVER_NAME" | awk 'NR == 1 {print $1}')"
-            if [ -n "$server_ip" ] && tailscale ping --timeout=5s "$server_ip" >/dev/null 2>&1; then
-              echo "IMMICH_URL=http://${server_ip}:2283" >> "$GITHUB_ENV"
-              echo "SERVER_IP=${server_ip}" >> "$GITHUB_ENV"
-              echo "K6_PROMETHEUS_RW_SERVER_URL=http://${server_ip}:9090/api/v1/write" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            sleep 5
-          done
-          tailscale status
-          exit 1
+          server_ip="$(bash scripts/wait_direct_path.sh "$SERVER_NAME")"
+          echo "IMMICH_URL=http://${server_ip}:2283" >> "$GITHUB_ENV"
+          echo "SERVER_IP=${server_ip}" >> "$GITHUB_ENV"
+          echo "K6_PROMETHEUS_RW_SERVER_URL=http://${server_ip}:9090/api/v1/write" >> "$GITHUB_ENV"
       - name: Wait for remote Immich
         timeout-minutes: 30
         run: |
