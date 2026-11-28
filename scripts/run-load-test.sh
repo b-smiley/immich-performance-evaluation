@@ -63,6 +63,7 @@ python3 "${SCRIPT_DIR}/generate_fixtures.py" \
   --kinds "${FIXTURE_KINDS}" \
   --seed "${FIXTURE_SEED:-533}" \
   ${POOL_SIZE:+--pool-size "${POOL_SIZE}"}
+cp "${FIXTURE_DIR}/manifest.json" "${RESULTS_DIR}/fixture-manifest.json"
 
 python3 "${SCRIPT_DIR}/preflight.py" memory \
   --manifest "${FIXTURE_DIR}/manifest.json" \
