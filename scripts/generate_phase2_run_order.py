@@ -36,6 +36,8 @@ CONSTANTS = {
     "think_time_seconds": "0",
     "size_level": "small",
     "resolution": "4k",
+    # Caps background catch-up; see docs/run-matrix.md.
+    "drain_timeout_seconds": "600",
 }
 
 RUN_ORDER_COLUMNS = (
@@ -59,6 +61,7 @@ BATCH_COLUMNS = (
     "photo_ratio",
     "size_level",
     "resolution",
+    "drain_timeout_seconds",
 )
 
 

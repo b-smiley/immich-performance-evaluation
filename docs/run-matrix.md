@@ -195,6 +195,7 @@ Every run uses these constants:
 | `think_time_seconds` | `0` |
 | `size_level` | `small` |
 | `resolution` | `4k` |
+| `drain_timeout_seconds` | `600` |
 
 `photo_ratio` comes from the workload: `1.0` photo-only, `0.0` video-only, and
 `0.5` mixed.
@@ -303,6 +304,11 @@ job waits 45 minutes for the client, and fixture generation, k6, and catch-up al
 share that time, so the default fits runs of up to about 10 minutes. For longer
 runs, lower the limit with the workflow's `drain_timeout_seconds` input or raise
 the wait in `.github/workflows/immich-load-test.yml`.
+
+Phase 2 caps catch-up at 600 seconds. Phase 1 already identified thumbnail
+generation as the bottleneck, so Phase 2 measures the steady thumbnail rate rather
+than the full catch-up time, and 600 seconds after the load is enough to measure
+it. The cap also keeps the batch's GitHub Actions time down.
 
 ## Open questions
 
