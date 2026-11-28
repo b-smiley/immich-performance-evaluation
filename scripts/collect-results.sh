@@ -36,3 +36,27 @@ else
   printf 'Error: Prometheus data volume was not found for project %s.\n' "${PROJECT_NAME}" >&2
   exit 1
 fi
+
+# One row per asset. Immich writes asset_file rows once all of an asset's
+# transforms finish, so preview_at is when the asset became viewable.
+docker compose exec -T database sh -c \
+  'psql --quiet --no-psqlrc -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+  > "${RESULTS_DIR}/asset-timeline.csv" <<'SQL'
+SET TIME ZONE 'UTC';
+COPY (
+  SELECT a.id, a.type,
+    a."createdAt" AS uploaded_at,
+    s."metadataExtractedAt" AS metadata_at,
+    p."createdAt" AS preview_at,
+    t."createdAt" AS thumbnail_at,
+    e."exifImageWidth" AS width,
+    e."exifImageHeight" AS height,
+    e."fileSizeInByte" AS file_size_bytes
+  FROM asset a
+  LEFT JOIN asset_job_status s ON s."assetId" = a.id
+  LEFT JOIN asset_exif e ON e."assetId" = a.id
+  LEFT JOIN asset_file p ON p."assetId" = a.id AND p.type = 'preview' AND NOT p."isEdited"
+  LEFT JOIN asset_file t ON t."assetId" = a.id AND t.type = 'thumbnail' AND NOT t."isEdited"
+  ORDER BY a."createdAt"
+) TO STDOUT WITH (FORMAT csv, HEADER);
+SQL

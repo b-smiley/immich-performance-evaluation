@@ -202,6 +202,7 @@ raw files remain available for independent analysis:
 - `data/results/resource-usage.json`
 - `data/results/worker-usage.json`
 - `data/results/cpu-limits.json`
+- `data/results/asset-timeline.csv`
 - `data/results/prometheus-tsdb.tar.gz`
 - `data/results/compose.log`
 - `data/results/compose-ps.txt`
@@ -225,6 +226,14 @@ using `catch_up_seconds`:
 
 Immich's `completed` count stayed at 0 in testing, so do not use it to count
 processed jobs.
+
+`asset-timeline.csv`, in the server artifact, has one row per uploaded asset from
+the Immich database, taken when the run ends: `uploaded_at`, `metadata_at`,
+`preview_at` and `thumbnail_at` in UTC, plus `width`, `height` and
+`file_size_bytes`. Immich writes the preview and thumbnail rows once all of an
+asset's images are made, so `preview_at` is when the asset became viewable. Assets
+still waiting have empty times. `scripts/aggregate_results.py` turns it into the
+steady thumbnail rate and the other thumbnail columns.
 
 `cpu-limits.json`, in the server artifact, records the cores applied to
 `immich-server`, `database`, and `redis`. The workflow fails if they differ from

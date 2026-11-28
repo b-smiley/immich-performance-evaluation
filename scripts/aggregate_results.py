@@ -6,18 +6,29 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import re
 import statistics
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
+from watch_queues import backlog
+
+# ---------------------------------------------------------------------------
+# Artifacts and k6 upload metrics
+# ---------------------------------------------------------------------------
 ARTIFACT_NAME = re.compile(r"^immich-load_run=(\d+)_role=(client|server)_")
 PERCENTILES = (50, 75, 90, 95, 99)
 LATENCY_COLUMNS = [f"upload_p{p}_ms" for p in PERCENTILES]
 SERVICES = ("immich-server", "database", "redis")
 # Matches MB in generate_fixtures.py.
 MB = 1_000_000
+
+# ---------------------------------------------------------------------------
+# Service metrics: per-phase summaries written by summarize_run.py (client)
+# ---------------------------------------------------------------------------
 LATENCY_FILE = "service-latency.json"
 RESOURCE_FILE = "resource-usage.json"
 WORKER_FILE = "worker-usage.json"
@@ -55,6 +66,38 @@ SERVICE_SOURCES = {
 }
 SERVICE_COLUMNS = list(SERVICE_SOURCES)
 
+# ---------------------------------------------------------------------------
+# Thumbnails: per-asset timeline (server) and queue polls (client)
+# ---------------------------------------------------------------------------
+TIMELINE_FILE = "asset-timeline.csv"
+QUEUE_STATS_FILE = "queue-stats.jsonl"
+THUMBNAIL_QUEUE = "thumbnailGeneration"
+METADATA_QUEUE = "metadataExtraction"
+# A shorter metadata-free span is too noisy to trust as the steady rate.
+MIN_STEADY_SECONDS = 60
+CURVE_STEP_SECONDS = 10
+KINDS = {"IMAGE": "photo", "VIDEO": "video"}
+# Stage -> (start, end) timeline columns.
+STAGES = {
+    "upload_to_metadata": ("uploaded_at", "metadata_at"),
+    "metadata_to_preview": ("metadata_at", "preview_at"),
+    "upload_to_preview": ("uploaded_at", "preview_at"),
+}
+STAGE_PERCENTILES = {"p50": 50, "p95": 95, "max": 100}
+TIMELINE_COLUMNS = [
+    "steady_previews_per_s", "steady_photo_previews_per_s", "steady_video_previews_per_s",
+    "steady_span_s", "metadata_busy", "queue_steady_thumbnails_per_s", "steady_rate_diff_pct",
+    "previews_remaining", "projected_catch_up_s",
+    *(f"{kind}_viewable_pct" for kind in KINDS.values()),
+    *(
+        f"{kind}_{stage}_{stat}_s"
+        for kind in KINDS.values() for stage in STAGES for stat in STAGE_PERCENTILES
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Help text: where every column comes from
+# ---------------------------------------------------------------------------
 EPILOG = """\
 input layout (as written by gh run download):
   RUNS_DIR/<run_id>/immich-load_run=<run_id>_role=client_.../
@@ -102,6 +145,44 @@ columns:
   expected_cores             cpu-limits.json expected_cores
   cpu_model_flag             1 if cpu_model differs from the most common model in
                              the folder, 0 if it matches, empty if unknown
+
+thumbnail columns (server asset-timeline.csv, client queue-summary.json and
+queue-stats.jsonl):
+  The cut-off is queue-summary load_end + drain_timeout_seconds. A preview
+  created after it counts as unfinished. Asset times come from the server
+  database and poll times from the client; both runners use NTP.
+  steady_previews_per_s      previews created / time over the steady span:
+  steady_photo_previews_per_s  queue polls after load_end, up to the cut-off,
+  steady_video_previews_per_s  where thumbnailGeneration had a backlog and
+  steady_span_s                metadataExtraction had none; span length in s
+  metadata_busy              1 if that span was under MIN_STEADY_SECONDS, so
+                               the span with any thumbnail backlog was used
+                               instead; the rate may then be too low
+  queue_steady_thumbnails_per_s
+                             cross-check: thumbnailGeneration backlog drop
+                               over the same span / its length. Immich removes
+                               finished jobs, so the completed count stays 0.
+                               Only valid while nothing new is queued, so
+                               expect a gap when metadata_busy is 1
+  steady_rate_diff_pct       (queue rate - steady_previews_per_s) /
+                               steady_previews_per_s x 100; how far the two
+                               sources disagree
+  previews_remaining         assets without a preview at the cut-off
+  projected_catch_up_s       previews_remaining / steady_previews_per_s; a
+                               projection, not a measurement
+  <kind>_viewable_pct        % of photo (or video) assets with a preview by
+                               the cut-off
+  <kind>_<stage>_p50_s       nearest-rank percentiles per kind for stages
+  <kind>_<stage>_p95_s         upload_to_metadata, metadata_to_preview and
+  <kind>_<stage>_max_s         upload_to_preview; unfinished assets rank last,
+                               so a value is empty unless at least that share
+                               finished; report it as over
+                               drain_timeout_seconds
+
+--curves FILE:
+  Also writes cumulative % of assets viewable every CURVE_STEP_SECONDS from
+  the first upload to the cut-off, as run_id, kind, seconds, viewable_pct rows.
+
   A missing file or field gives an empty cell.
 
 --group:
@@ -113,6 +194,9 @@ columns:
 """
 
 
+# ---------------------------------------------------------------------------
+# Reading helpers
+# ---------------------------------------------------------------------------
 def warn(message: str) -> None:
     print(f"Warning: {message}", file=sys.stderr)
 
@@ -144,6 +228,146 @@ def number(value: object) -> float | int | None:
     return None
 
 
+def parse_time(value: str | None) -> float | None:
+    """Return an ISO 8601 timestamp as epoch seconds, or None if it is empty."""
+    return datetime.fromisoformat(value).timestamp() if value else None
+
+
+# ---------------------------------------------------------------------------
+# Thumbnails: steady rate, stage percentiles and completion curve
+# ---------------------------------------------------------------------------
+def load_timeline(path: Path) -> list[dict] | None:
+    """Return photo and video rows with epoch-second times, or None if unreadable."""
+    try:
+        with path.open(newline="", encoding="utf-8") as handle:
+            return [
+                {
+                    "kind": KINDS[row["type"]],
+                    **{column: parse_time(row[column]) for column in ("uploaded_at", "metadata_at", "preview_at")},
+                }
+                for row in csv.DictReader(handle)
+                if row["type"] in KINDS
+            ]
+    except FileNotFoundError:
+        warn(f"missing {path}")
+    except (OSError, KeyError, ValueError) as error:
+        warn(f"cannot read {path}: {error}")
+    return None
+
+
+def load_polls(path: Path, start: float, end: float) -> list[tuple[float, dict]]:
+    """Return (time, queues) for each successful poll after start, up to end."""
+    polls = []
+    try:
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                record = json.loads(line)
+                at = parse_time(record.get("time"))
+                if "queues" in record and at is not None and start < at <= end:
+                    polls.append((at, record["queues"]))
+    except FileNotFoundError:
+        warn(f"missing {path}")
+    except (OSError, ValueError) as error:
+        warn(f"cannot read {path}: {error}")
+    return polls
+
+
+def has_backlog(queues: dict, name: str) -> bool:
+    return name in queues and backlog(queues[name]) > 0
+
+
+def steady_span(polls: list[tuple[float, dict]]) -> tuple[float, float, bool] | None:
+    """Return (start, end, metadata_busy) for the thumbnail rate, or None if too short.
+
+    The steady span has a thumbnail backlog and no metadata backlog, so the
+    worker is limited by thumbnail work alone. If that span is too short, the
+    span with any thumbnail backlog is used and flagged as metadata_busy.
+    """
+    thumbnail = [(at, queues) for at, queues in polls if has_backlog(queues, THUMBNAIL_QUEUE)]
+    steady = [at for at, queues in thumbnail if not has_backlog(queues, METADATA_QUEUE)]
+    if len(steady) > 1 and steady[-1] - steady[0] >= MIN_STEADY_SECONDS:
+        return steady[0], steady[-1], False
+    times = [at for at, _ in thumbnail]
+    return (times[0], times[-1], True) if len(times) > 1 else None
+
+
+def percentile_with_unfinished(durations: list[float | None], percent: float) -> float | None:
+    """Nearest-rank percentile with unfinished assets (None) ranked last.
+
+    Returns None when the rank falls on an unfinished asset, i.e. when fewer
+    than percent % of the assets finished by the cut-off.
+    """
+    if not durations:
+        return None
+    ranked = sorted(durations, key=lambda duration: (duration is None, duration or 0.0))
+    return ranked[max(0, math.ceil(percent / 100 * len(ranked)) - 1)]
+
+
+def timeline_metrics(rows: list[dict], polls: list[tuple[float, dict]], cut_off: float) -> dict:
+    """Return the thumbnail columns for one run."""
+
+    def done(at: float | None) -> bool:
+        return at is not None and at <= cut_off
+
+    metrics: dict[str, object] = {}
+    for kind in KINDS.values():
+        assets = [row for row in rows if row["kind"] == kind]
+        viewable = sum(done(row["preview_at"]) for row in assets)
+        metrics[f"{kind}_viewable_pct"] = 100 * viewable / len(assets) if assets else None
+        for stage, (start, end) in STAGES.items():
+            durations = [
+                row[end] - row[start] if row[start] is not None and done(row[end]) else None
+                for row in assets
+            ]
+            for stat, percent in STAGE_PERCENTILES.items():
+                metrics[f"{kind}_{stage}_{stat}_s"] = percentile_with_unfinished(durations, percent)
+
+    remaining = sum(not done(row["preview_at"]) for row in rows)
+    metrics["previews_remaining"] = remaining
+    span = steady_span(polls)
+    if span is None:
+        return metrics
+    start, end, metadata_busy = span
+    metrics["steady_span_s"] = end - start
+    metrics["metadata_busy"] = int(metadata_busy)
+    for label, kinds in (("", KINDS.values()), ("photo_", ("photo",)), ("video_", ("video",))):
+        assets = [row["preview_at"] for row in rows if row["kind"] in kinds]
+        # Empty, not 0, when the run uploaded none of this kind.
+        if assets:
+            count = sum(at is not None and start < at <= end for at in assets)
+            metrics[f"steady_{label}previews_per_s"] = count / (end - start)
+    rate = metrics.get("steady_previews_per_s")
+    metrics["projected_catch_up_s"] = remaining / rate if remaining and rate else None
+
+    # Cross-check from a second source: the queue's backlog drop over the same span.
+    queues_at = dict(polls)
+    drop = backlog(queues_at[start][THUMBNAIL_QUEUE]) - backlog(queues_at[end][THUMBNAIL_QUEUE])
+    queue_rate = drop / (end - start)
+    metrics["queue_steady_thumbnails_per_s"] = queue_rate
+    metrics["steady_rate_diff_pct"] = 100 * (queue_rate - rate) / rate if rate else None
+    return metrics
+
+
+def completion_curve(rows: list[dict], cut_off: float) -> list[dict]:
+    """Return cumulative % viewable per kind every CURVE_STEP_SECONDS from the first upload."""
+    uploads = [row["uploaded_at"] for row in rows if row["uploaded_at"] is not None]
+    if not uploads:
+        return []
+    first = min(uploads)
+    curve = []
+    for kind in KINDS.values():
+        previews = [row["preview_at"] for row in rows if row["kind"] == kind]
+        if not previews:
+            continue
+        for seconds in range(0, math.floor(cut_off - first) + 1, CURVE_STEP_SECONDS):
+            viewable = sum(at is not None and at <= first + seconds for at in previews)
+            curve.append({"kind": kind, "seconds": seconds, "viewable_pct": 100 * viewable / len(previews)})
+    return curve
+
+
+# ---------------------------------------------------------------------------
+# Runs: pair artifacts and read one run's metrics
+# ---------------------------------------------------------------------------
 def find_artifacts(root: Path) -> dict[str, dict[str, Path]]:
     """Map each run id to its client and server artifact folders."""
     runs: dict[str, dict[str, Path]] = {}
@@ -202,6 +426,17 @@ def load_run(run_id: str, folders: dict[str, Path]) -> tuple[dict, dict]:
     present = [peak for peak in peaks.values() if peak is not None]
     metrics["peak_backlog_max"] = max(present) if present else None
 
+    metrics["curve"] = []
+    load_end = dig(queues, "load_end")
+    drain_timeout = number(dig(queues, "drain_timeout_seconds"))
+    timeline = load_timeline(server / TIMELINE_FILE) if server else None
+    if client and timeline is not None and isinstance(load_end, str) and drain_timeout is not None:
+        start = parse_time(load_end)
+        cut_off = start + drain_timeout
+        polls = load_polls(client / QUEUE_STATS_FILE, start, cut_off)
+        metrics.update(timeline_metrics(timeline, polls, cut_off))
+        metrics["curve"] = completion_curve(timeline, cut_off)
+
     phases = {}
     for name in (LATENCY_FILE, RESOURCE_FILE, WORKER_FILE):
         summary = read(client, name)
@@ -222,6 +457,9 @@ def load_run(run_id: str, folders: dict[str, Path]) -> tuple[dict, dict]:
     return factors, metrics
 
 
+# ---------------------------------------------------------------------------
+# Runner CPU check
+# ---------------------------------------------------------------------------
 def flag_cpu_models(rows: list[dict]) -> None:
     """Set cpu_model_flag against the most common known model in the folder."""
     counts = Counter(row["cpu_model"] for row in rows if row["cpu_model"])
@@ -239,6 +477,9 @@ def flag_cpu_models(rows: list[dict]) -> None:
         row["cpu_model_flag"] = None if model is None else int(model != common)
 
 
+# ---------------------------------------------------------------------------
+# Grouping and CSV output
+# ---------------------------------------------------------------------------
 def group_rows(rows: list[dict], factor_columns: list[str], metric_columns: list[str]) -> list[dict]:
     """Collapse runs with identical factors into mean and standard deviation rows."""
     groups: dict[tuple, list[dict]] = {}
@@ -275,6 +516,9 @@ def write_csv(rows: list[dict], columns: list[str], output: Path | None) -> None
             write(handle)
 
 
+# ---------------------------------------------------------------------------
+# Command line
+# ---------------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -285,6 +529,7 @@ def main() -> int:
         "--exclude-flagged", action="store_true", help="with --group, leave out runs with cpu_model_flag 1"
     )
     parser.add_argument("-o", "--output", type=Path, help="CSV file to write (default: stdout)")
+    parser.add_argument("--curves", type=Path, help="also write per-run completion curves to this CSV")
     args = parser.parse_args()
     if args.exclude_flagged and not args.group:
         parser.error("--exclude-flagged requires --group")
@@ -299,10 +544,12 @@ def main() -> int:
     factor_columns: list[str] = []
     queue_names: set[str] = set()
     rows = []
+    curves = []
     for run_id in sorted(artifacts, key=int):
         factors, metrics = load_run(run_id, artifacts[run_id])
         factor_columns += [name for name in factors if name not in factor_columns]
         queue_names.update(metrics["peak_backlog"])
+        curves += [{"run_id": run_id, **point} for point in metrics.pop("curve")]
         rows.append({**factors, **metrics})
     backlog_columns = [f"peak_backlog_{name}" for name in sorted(queue_names)]
     for row in rows:
@@ -313,7 +560,7 @@ def main() -> int:
 
     metric_columns = [
         *LATENCY_COLUMNS, "error_rate", "uploads_per_s", "mb_per_s", "catch_up_s",
-        *backlog_columns, "peak_backlog_max", *SERVICE_COLUMNS,
+        *backlog_columns, "peak_backlog_max", *SERVICE_COLUMNS, *TIMELINE_COLUMNS,
     ]
     if args.group:
         if args.exclude_flagged:
@@ -328,9 +575,11 @@ def main() -> int:
         columns = [
             "run_id", *factor_columns, *LATENCY_COLUMNS, "error_rate", "uploads_per_s", "mb_per_s",
             "queue_status", "catch_up_s", *backlog_columns, "peak_backlog_max", *SERVICE_COLUMNS,
-            "cpu_model", "pinned_cores", "expected_cores", "cpu_model_flag",
+            *TIMELINE_COLUMNS, "cpu_model", "pinned_cores", "expected_cores", "cpu_model_flag",
         ]
     write_csv(rows, columns, args.output)
+    if args.curves:
+        write_csv(curves, ["run_id", "kind", "seconds", "viewable_pct"], args.curves)
     return 0
 
 

@@ -309,6 +309,11 @@ Phase 2 caps catch-up at 600 seconds. Phase 1 already identified thumbnail
 generation as the bottleneck, so Phase 2 measures the steady thumbnail rate rather
 than the full catch-up time, and 600 seconds after the load is enough to measure
 it. The cap also keeps the batch's GitHub Actions time down.
+`scripts/aggregate_results.py` measures that rate from each run's per-asset
+timeline while the thumbnail queue still has a backlog and metadata extraction has
+finished. For a run that hits the cap, it also reports a projected catch-up time:
+the assets still without a preview divided by that rate. The projection assumes
+the rate stays steady and is always labelled as projected, never as measured.
 
 ## Open questions
 
