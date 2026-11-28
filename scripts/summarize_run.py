@@ -327,12 +327,36 @@ QUEUE_GAUGES = f'{{{WORKER},state="active"}}'
 QUEUE_METRIC = "immich_queue_jobs"
 STEP_SUMS = f"immich_repository_duration_ms_sum{{{WORKER}}}"
 STEP_COUNTS = f"immich_repository_duration_ms_count{{{WORKER}}}"
+STEP_BUCKETS = f"immich_repository_duration_ms_bucket{{{WORKER}}}"
+STEP_PERCENTILES = (50, 95, 99)
 TOP_STEPS = 10
 # These repositories dispatch jobs and events and are timed around the steps they
 # run, so ranking them would only repeat the time of the steps inside them.
 WRAPPER_REPOSITORIES = ("event", "job")
 # Timed once per job of any kind, including those Immich keeps no counter for.
 JOB_RUN_STEP = ("job", "run")
+# Media steps Immich times inside other media steps (Immich v3.4.2
+# media.repository.ts), so their time is already in their parents'. Only
+# transform does real work; the others build sharp pipelines.
+NESTED_STEPS = {
+    "media.transform": ("media.decode_image", "media.generate_thumbnail", "media.generate_thumbhash"),
+    "media.get_image_decoding_pipeline": ("media.decode_image",),
+    "media.encoded": ("media.get_image_decoding_pipeline",),
+    "media.get_pipeline_colorspace": ("media.get_image_decoding_pipeline", "media.tag"),
+    "media.raw": ("media.transform", "media.tag"),
+    "media.edit": ("media.transform",),
+    "media.tag": ("media.generate_thumbnail",),
+}
+# Top-level steps of each chain stage; every other top-level step counts as other.
+# Video thumbnails come from ffmpeg (transcode) and video metadata from ffprobe (probe).
+CHAIN_STAGES = {
+    "metadata": ("metadata.read_tags", "media.probe", "media.probe_packets"),
+    "thumbnail": (
+        "media.decode_image", "media.generate_thumbnail", "media.generate_thumbhash", "media.transcode",
+    ),
+}
+# Disabled by default, so its jobs are skipped and it has no timed steps of its own.
+STORAGE_TEMPLATE_JOB = "storage_template_migration_single"
 
 
 def collect_process_samples(url: str, start: float, end: float) -> list[dict]:
@@ -473,6 +497,83 @@ def rank_steps(times: dict[tuple[str, str], tuple[float, float]]) -> list[dict]:
     return steps[:TOP_STEPS]
 
 
+def step_buckets(url: str, start: float, end: float) -> dict[tuple[str, str], dict[float, float]]:
+    """Return each step's cumulative bucket counts for the phase, keyed by upper bound in ms."""
+    buckets: dict[tuple[str, str], dict[float, float]] = {}
+    for (repository, method, bound), count in counter_changes(
+        url, STEP_BUCKETS, ("repository", "method", "le"), start, end
+    ).items():
+        buckets.setdefault((repository, method), {})[float(bound)] = count
+    return buckets
+
+
+def bucket_percentiles(buckets: dict[float, float]) -> dict[str, float | None]:
+    """Estimate percentiles from cumulative bucket counts the way histogram_quantile does.
+
+    Interpolates linearly inside the bucket, so an estimate can be off by up to that
+    bucket's width. A percentile that falls in the +Inf bucket is None.
+    """
+    bounds = sorted(buckets)
+    total = buckets[bounds[-1]] if bounds else 0.0
+    estimates: dict[str, float | None] = {}
+    for percent in STEP_PERCENTILES:
+        rank = percent / 100 * total
+        estimate = None
+        lower, below = 0.0, 0.0
+        for bound in bounds:
+            count = buckets[bound]
+            if total and count >= rank:
+                if not math.isinf(bound):
+                    estimate = bound if count == below else lower + (bound - lower) * (rank - below) / (count - below)
+                break
+            lower, below = bound, count
+        estimates[f"p{percent}_ms"] = round(estimate, 3) if estimate is not None else None
+    return estimates
+
+
+def all_steps(
+    times: dict[tuple[str, str], tuple[float, float]], buckets: dict[tuple[str, str], dict[float, float]]
+) -> list[dict]:
+    """Return every step except the wrappers, with percentiles, marking nested ones."""
+    steps = []
+    for (repository, method), (total_ms, calls) in times.items():
+        if repository in WRAPPER_REPOSITORIES or not (total_ms and calls):
+            continue
+        name = f"{repository}.{method}"
+        step = {
+            "step": name,
+            "total_seconds": round(total_ms / 1000, 3),
+            "calls": int(round(calls)),
+            "mean_ms": round(total_ms / calls, 3),
+            **bucket_percentiles(buckets.get((repository, method), {})),
+        }
+        if name in NESTED_STEPS:
+            step["nested_in"] = list(NESTED_STEPS[name])
+        steps.append(step)
+    steps.sort(key=lambda item: item["total_seconds"], reverse=True)
+    return steps
+
+
+def summarize_chain(steps: list[dict], jobs: dict, processes: dict, ffmpeg: dict) -> dict:
+    """Return each chain stage's share of the summed top-level step time."""
+    top_level = [step for step in steps if "nested_in" not in step]
+    total = sum(step["total_seconds"] for step in top_level)
+    seconds = {
+        stage: sum(step["total_seconds"] for step in top_level if step["step"] in names)
+        for stage, names in CHAIN_STAGES.items()
+    }
+    seconds["other"] = total - sum(seconds.values())
+    return {
+        "stages": {
+            stage: {"seconds": round(value, 3), "share_pct": round(100 * value / total, 1) if total else None}
+            for stage, value in seconds.items()
+        },
+        "storage_template_jobs": jobs["by_job"].get(STORAGE_TEMPLATE_JOB, {}),
+        "exiftool_cpu_percent_mean": processes.get("exiftool", {}).get("cpu_percent", {}).get("mean"),
+        "ffmpeg_cpu_seconds": ffmpeg["cpu_seconds"],
+    }
+
+
 def summarize_worker(url: str, results_dir: Path, resource_usage: dict) -> dict:
     windows = phase_windows(results_dir)
     start = windows["load"]["start"]
@@ -493,9 +594,15 @@ def summarize_worker(url: str, results_dir: Path, resource_usage: dict) -> dict:
     containers, container_reason = container_cpu(resource_usage)
 
     phases = {}
+    bucket_bounds: set[float] = set()
     for name, window in windows.items():
         phase_start, phase_end = window["start"], window["end"]
         times = step_times(url, phase_start, phase_end)
+        buckets = step_buckets(url, phase_start, phase_end)
+        for counts in buckets.values():
+            bucket_bounds.update(bound for bound in counts if not math.isinf(bound))
+        steps = all_steps(times, buckets)
+        jobs = summarize_jobs(url, phase_start, phase_end, times.get(JOB_RUN_STEP))
         processes = summarize_processes(samples, phase_start, phase_end)
         ffmpeg = (
             summarize_ffmpeg(url, phase_start, phase_end)
@@ -515,11 +622,25 @@ def summarize_worker(url: str, results_dir: Path, resource_usage: dict) -> dict:
             "unattributed": summarize_unattributed(
                 (containers or {}).get(name), container_reason, parts
             ),
-            "jobs": summarize_jobs(url, phase_start, phase_end, times.get(JOB_RUN_STEP)),
+            "jobs": jobs,
             "queues_active": summarize_queues(url, phase_start, phase_end),
             "steps": rank_steps(times),
+            "steps_all": steps,
+            "chain": summarize_chain(steps, jobs, processes, ffmpeg),
         }
-    summary = {"status": "ok", "phases": phases}
+    summary = {
+        "status": "ok",
+        "step_notes": {
+            "timing": "Step times are wall-clock, measured while jobs run concurrently, so they are not CPU time.",
+            "percentiles": "Estimated from Immich's histogram buckets by linear interpolation; empty when above "
+            "the top bucket.",
+            "bucket_bounds_ms": sorted(bucket_bounds),
+            "nested": "Steps with nested_in are timed inside those steps; never add them to their parents.",
+            "chain": "Shares of summed top-level step time. exiftool and ffmpeg CPU are listed beside the shares, "
+            "not added, because the steps already include waiting on them.",
+        },
+        "phases": phases,
+    }
     if warnings:
         summary["warnings"] = warnings
         for warning in warnings:

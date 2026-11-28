@@ -202,6 +202,7 @@ raw files remain available for independent analysis:
 - `data/results/resource-usage.json`
 - `data/results/worker-usage.json`
 - `data/results/cpu-limits.json`
+- `data/results/fixture-manifest.json`
 - `data/results/asset-timeline.csv`
 - `data/results/prometheus-tsdb.tar.gz`
 - `data/results/compose.log`
@@ -234,6 +235,8 @@ the Immich database, taken when the run ends: `uploaded_at`, `metadata_at`,
 asset's images are made, so `preview_at` is when the asset became viewable. Assets
 still waiting have empty times. `scripts/aggregate_results.py` turns it into the
 steady thumbnail rate and the other thumbnail columns.
+
+`fixture-manifest.json` lists the fixture files the run uploaded, with their sizes.
 
 `cpu-limits.json`, in the server artifact, records the cores applied to
 `immich-server`, `database`, and `redis`. The workflow fails if they differ from
@@ -308,6 +311,8 @@ A `warnings` list, when present, names parts that were not measured. Each phase 
 | `jobs` | worker telemetry | Jobs finished per job and outcome (`success`, `failed`, `skipped`), the totals, and `success_per_s`. `runs`, `runs_per_s`, and `mean_run_ms` cover every job the worker ran. |
 | `queues_active` | worker telemetry | `mean` and `peak` jobs running at once per queue. |
 | `steps` | worker telemetry | The 10 internal steps (repository methods), such as `media.transcode`, with the most `total_seconds`, with `calls` and `mean_ms`. |
+| `steps_all` | worker telemetry | Every step except the wrappers, with the same fields plus `p50_ms`, `p95_ms` and `p99_ms`. Steps timed inside others have `nested_in`. |
+| `chain` | the above | Time and share per job stage (metadata, thumbnail, other), the storage template's job outcomes, and exiftool and ffmpeg CPU. |
 
 - **Process groups are set in `monitoring/process-exporter/config.yml`.** The worker
   is Immich's main process, named `immich`; the API is `immich-api`. Processes that
@@ -353,6 +358,21 @@ A `warnings` list, when present, names parts that were not measured. Each phase 
   others, so step times can add up to more than the phase length. Use them to rank
   where the worker spends time, not as a breakdown of it. The `event` and `job`
   repositories are left out because they are timed around the other steps.
+- **Don't add a `nested_in` step to its parents.** Its time is already inside
+  theirs. The one that matters is `media.transform`, the resize that Optimization
+  Hypothesis 1 changes.
+- **Step percentiles are estimates** from Immich's histogram buckets (0.1 to
+  10000 ms, listed in `step_notes`). Each can be off by up to its bucket's width,
+  and anything over 10 s is empty.
+- **`chain` shares are wall-clock time, not CPU.**
+  - Metadata: `metadata.read_tags`, `media.probe`, `media.probe_packets`.
+  - Thumbnail: `media.decode_image`, `media.generate_thumbnail`,
+    `media.generate_thumbhash`, `media.transcode` (video thumbnails use ffmpeg;
+    this also includes video encoding if it runs).
+  - Other: everything else, mostly database and file calls.
+  - exiftool and ffmpeg CPU are shown beside the shares, not added to them.
+- **The storage template has no share.** It's off by default, so its jobs are
+  skipped. `storage.*` is the file layer every stage uses, not this job.
 - **Prometheus renames the telemetry.** Immich puts names inside metric names, such
   as `immich_jobs_asset_generate_thumbnails_success_total`. Prometheus stores this as
   `immich_jobs_total{immich_job="asset_generate_thumbnails",outcome="success"}`, and
